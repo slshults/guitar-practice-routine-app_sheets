@@ -7,13 +7,37 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Store PIDs for cleanup
+declare -a PIDS=()
+
 # Function to cleanup processes on exit
 cleanup() {
     echo -e "\n${BLUE}Cleaning up processes...${NC}"
-    # Kill all child processes
-    pkill -P $$
+    
+    # Kill all stored PIDs and their children
+    for pid in "${PIDS[@]}"; do
+        if kill -0 $pid 2>/dev/null; then
+            echo -e "${BLUE}Stopping process $pid and children...${NC}"
+            pkill -P $pid 2>/dev/null
+            kill -TERM $pid 2>/dev/null
+            sleep 1
+            pkill -P $pid 2>/dev/null
+            kill -KILL $pid 2>/dev/null
+        fi
+    done
+    
     # Additional cleanup for any remaining processes
-    jobs -p | xargs -r kill
+    for cmd in "flask run" "npm run watch" "inotifywait" "python.*run.py"; do
+        pids=$(pgrep -f "$cmd" 2>/dev/null)
+        if [ -n "$pids" ]; then
+            echo -e "${BLUE}Stopping $cmd processes...${NC}"
+            pkill -TERM -f "$cmd" 2>/dev/null
+            sleep 1
+            pkill -KILL -f "$cmd" 2>/dev/null
+        fi
+    done
+    
+    echo -e "${GREEN}Cleanup complete${NC}"
     exit 0
 }
 
@@ -33,8 +57,16 @@ is_process_running() {
     fi
 }
 
+# Function to start a process and store its PID
+start_process() {
+    "$@" &
+    local pid=$!
+    PIDS+=($pid)
+    return $pid
+}
+
 # Trap cleanup function for script termination
-trap cleanup SIGINT SIGTERM
+trap cleanup SIGINT SIGTERM EXIT
 
 # Load nvm
 export NVM_DIR="$HOME/.nvm"
@@ -52,6 +84,7 @@ npm run build || handle_error "Failed to build assets"
 echo -e "${GREEN}Starting Flask server...${NC}"
 FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run &
 FLASK_PID=$!
+PIDS+=($FLASK_PID)
 
 # Wait a moment to ensure Flask starts
 sleep 2
@@ -65,6 +98,7 @@ fi
 echo -e "${GREEN}Starting Vite...${NC}"
 npm run watch &
 VITE_PID=$!
+PIDS+=($VITE_PID)
 
 # Wait a moment to ensure Vite starts
 sleep 2
@@ -85,6 +119,7 @@ echo -e "${GREEN}Starting Python file watcher...${NC}"
         fi
         FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run &
         FLASK_PID=$!
+        PIDS+=($FLASK_PID)
         sleep 2
         if ! is_process_running $FLASK_PID; then
             echo -e "${RED}Failed to restart Flask server${NC}"
@@ -92,6 +127,7 @@ echo -e "${GREEN}Starting Python file watcher...${NC}"
     done
 ) &
 WATCHER_PID=$!
+PIDS+=($WATCHER_PID)
 
 echo -e "${GREEN}Guitar Practice Assistant is ready!${NC}"
 echo -e "${BLUE}Press Ctrl+C to stop all processes${NC}"
