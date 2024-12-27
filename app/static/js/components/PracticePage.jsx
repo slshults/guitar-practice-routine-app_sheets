@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState, useRef } from 'react';
+import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
@@ -53,12 +53,13 @@ export const PracticePage = () => {
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [activeTimers, setActiveTimers] = useState(new Set());
-  const [completedItems, setCompletedItems] = useState(() => {
+  const [itemDetails, setItemDetails] = useState({});
+  const completedItemIds = useMemo(() => {
     if (routine?.items) {
       return new Set(
         routine.items
-          .filter(item => item.completed === 'TRUE')
-          .map(item => item.ID)
+          .filter(item => item['D'] === 'TRUE')  // Column D is completed status
+          .map(item => item['A'])  // Column A is ID
       );
     }
     return new Set();
@@ -190,10 +191,22 @@ export const PracticePage = () => {
     return () => clearInterval(interval);
   }, [activeTimers]);
 
-  if (loading) return <div className="text-2xl text-center p-8">Loading active routine...</div>;
-  if (error) return <div className="text-2xl text-red-500 text-center p-8">{error}</div>;
-  if (!routine) return <div className="text-2xl text-center p-8">No active routine selected</div>;
+  // New function to fetch item details
+  const fetchItemDetails = useCallback(async (itemId) => {
+    try {
+      const response = await fetch(`/api/items/${itemId}`);
+      if (!response.ok) throw new Error('Failed to fetch item details');
+      const data = await response.json();
+      setItemDetails(prev => ({
+        ...prev,
+        [itemId]: data
+      }));
+    } catch (error) {
+      console.error('Error fetching item details:', error);
+    }
+  }, []);
 
+  // Modify toggleItem to fetch item details when expanding
   const toggleItem = (itemId) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
@@ -201,10 +214,18 @@ export const PracticePage = () => {
         next.delete(itemId);
       } else {
         next.add(itemId);
-        // Initialize timer when expanding
-        initTimer(itemId, routine.items.find(item => item.ID === itemId)?.Duration || 5);
-        // Fetch notes when expanding
-        fetchNotes(routine.items.find(item => item.ID === itemId)?.['Item ID']);
+        // Get the routine item
+        const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
+        if (routineItem) {
+          // Fetch item details if we don't have them yet
+          if (!itemDetails[routineItem['B']]) {  // Column B is Item ID
+            fetchItemDetails(routineItem['B']);
+          }
+          // Initialize timer when expanding
+          initTimer(itemId, itemDetails[routineItem['B']]?.Duration || 5);
+          // Fetch notes when expanding
+          fetchNotes(routineItem['B']);
+        }
       }
       return next;
     });
@@ -212,8 +233,8 @@ export const PracticePage = () => {
 
   const toggleTimer = (itemId, e) => {
     e?.stopPropagation(); // Prevent expand/collapse when clicking timer
-    // Initialize timer if not already set
-    initTimer(itemId, routine.items.find(item => item.ID === itemId)?.Duration || 5);
+    const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
+    initTimer(itemId, itemDetails[routineItem?.['B']]?.Duration || 5);  // Column B is Item ID
     
     setActiveTimers(prev => {
       const next = new Set(prev);
@@ -228,7 +249,7 @@ export const PracticePage = () => {
 
   const toggleComplete = async (itemId, e) => {
     e?.stopPropagation(); // Prevent expand/collapse when clicking checkbox
-    const newState = !completedItems.has(itemId);
+    const newState = !completedItemIds.has(itemId);
     
     try {
       const response = await fetch(`/api/routines/${routine.name}/items/${itemId}/complete`, {
@@ -263,7 +284,8 @@ export const PracticePage = () => {
 
   const resetTimer = (itemId, e) => {
     e?.stopPropagation();
-    const duration = routine.items.find(item => item.ID === itemId)?.Duration || 5;
+    const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
+    const duration = itemDetails[routineItem?.['B']]?.Duration || 5;  // Column B is Item ID
     setTimers(prev => ({
       ...prev,
       [itemId]: duration * 60
@@ -271,7 +293,7 @@ export const PracticePage = () => {
   };
 
   const addNote = async (itemId, e) => {
-    e?.stopPropagation();  // Stop event from bubbling up
+    e?.stopPropagation();
     setEditingNoteItemId(itemId);
     setIsNoteEditorOpen(true);
   };
@@ -282,7 +304,7 @@ export const PracticePage = () => {
   };
 
   const toggleNotes = (itemId, e) => {
-    e?.stopPropagation(); // Prevent item expand/collapse
+    e?.stopPropagation();
     setExpandedNotes(prev => {
       const next = new Set(prev);
       if (next.has(itemId)) {
@@ -313,177 +335,161 @@ export const PracticePage = () => {
   };
 
   return (
-    <>
-      {loading && <div className="text-2xl text-center p-8">Loading active routine...</div>}
-      {error && <div className="text-2xl text-red-500 text-center p-8">{error}</div>}
-      {!routine && <div className="text-2xl text-center p-8">No active routine selected</div>}
-      {routine && !loading && !error && (
-        <Card className="w-full max-w-4xl bg-gray-900 text-gray-100">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-2xl">{routine.name}</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-gray-300 hover:text-white"
-              onClick={resetProgress}
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold">{routine?.name}</h1>
+        <Button
+          variant="outline"
+          onClick={resetProgress}
+          className="text-gray-300 hover:text-white"
+        >
+          Reset Progress
+        </Button>
+      </div>
+
+      <div className="space-y-4">
+        {routine?.items?.map((routineItem) => {
+          const isExpanded = expandedItems.has(routineItem['A']);  // Column A is ID
+          const isNotesExpanded = expandedNotes.has(routineItem['A']);
+          const isTimerActive = activeTimers.has(routineItem['A']);
+          const isCompleted = completedItemIds.has(routineItem['A']);
+          const timeRemaining = timers[routineItem['A']] !== undefined 
+            ? timers[routineItem['A']] 
+            : (itemDetails[routineItem['B']]?.Duration || 5) * 60;  // Column B is Item ID
+          const itemNotes = notes[routineItem['B']] || '';
+          const item = itemDetails[routineItem['B']] || {};
+          
+          return (
+            <div
+              key={routineItem['A']}  // Column A is ID
+              className="rounded-lg bg-gray-800 overflow-hidden"
             >
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Reset Progress
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {routine.items?.map((item) => {
-                const isExpanded = expandedItems.has(item.ID);
-                const isNotesExpanded = expandedNotes.has(item.ID);
-                const isTimerActive = activeTimers.has(item.ID);
-                const isCompleted = completedItems.has(item.ID);
-                const timeRemaining = timers[item.ID] !== undefined 
-                  ? timers[item.ID] 
-                  : item.Duration * 60;
-                const itemNotes = notes[item['Item ID']] || '';
-                
-                return (
-                  <div
-                    key={item.ID}
-                    className="rounded-lg bg-gray-800 overflow-hidden"
+              <div 
+                className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-700"
+                onClick={() => toggleItem(routineItem['A'])}  // Column A is ID
+              >
+                <div className="flex items-center space-x-4">
+                  <button
+                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center
+                      ${isCompleted 
+                        ? 'bg-green-500 border-green-500 text-white' 
+                        : 'border-gray-400 text-transparent hover:border-gray-300'}`}
+                    onClick={(e) => toggleComplete(routineItem['A'], e)}  // Column A is ID
                   >
-                    <div 
-                      className="flex items-center justify-between p-5 cursor-pointer hover:bg-gray-700"
-                      onClick={() => toggleItem(item.ID)}
+                    <Check className="h-4 w-4" />
+                  </button>
+                  {isExpanded ? (
+                    <ChevronDown className="h-5 w-5 text-gray-400" />
+                  ) : (
+                    <ChevronRight className="h-5 w-5 text-gray-400" />
+                  )}
+                  <span className={`text-xl ${isCompleted ? 'line-through text-gray-500' : ''}`}>
+                    {item['C'] || 'Loading...'}  {/* Column C is Title */}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <span className="text-lg text-gray-400">{item['E'] || '...'} mins</span>  {/* Column E is Duration */}
+                </div>
+              </div>
+              {isExpanded && (
+                <div className="px-8 pb-6">
+                  {/* Timer section */}
+                  <div className="flex flex-col items-center justify-center py-8 space-y-6">
+                    <button
+                      onClick={(e) => toggleTimer(routineItem['A'], e)}  // Column A is ID
+                      className="w-48 h-48 rounded-full border-4 border-gray-600 flex items-center justify-center hover:border-gray-500 transition-colors"
                     >
-                      <div className="flex items-center space-x-4">
+                      {isTimerActive ? (
+                        <PauseIcon className="h-24 w-24 text-red-500" />
+                      ) : (
+                        <PlayIcon className="h-24 w-24 text-green-500" />
+                      )}
+                    </button>
+                    <div className="flex flex-col items-center space-y-2">
+                      <div className="text-5xl font-mono">
+                        {formatTime(timeRemaining)}
+                      </div>
+                      {!isTimerActive && timeRemaining !== (item['E'] || 5) * 60 && (  // Column E is Duration
                         <button
-                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center
-                            ${isCompleted 
-                              ? 'bg-green-500 border-green-500 text-white' 
-                              : 'border-gray-400 text-transparent hover:border-gray-300'}`}
-                          onClick={(e) => toggleComplete(item.ID, e)}
+                          onClick={(e) => resetTimer(routineItem['A'], e)}  // Column A is ID
+                          className="flex items-center space-x-2 text-gray-400 hover:text-gray-300 transition-colors"
                         >
-                          <Check className="h-4 w-4" />
+                          <ResetIcon className="h-4 w-4" />
+                          <span>Reset Timer</span>
                         </button>
-                        {isExpanded ? (
-                          <ChevronDown className="h-5 w-5 text-gray-400" />
-                        ) : (
-                          <ChevronRight className="h-5 w-5 text-gray-400" />
-                        )}
-                        <span className={`text-xl ${isCompleted ? 'line-through text-gray-500' : ''}`}>
-                          {item.Title}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <span className="text-lg text-gray-400">{item.Duration} mins</span>
-                      </div>
+                      )}
                     </div>
-                    {isExpanded && (
-                      <div className="px-8 pb-6">
-                        {/* Timer section */}
-                        <div className="flex flex-col items-center justify-center py-8 space-y-6">
-                          <button
-                            onClick={(e) => toggleTimer(item.ID, e)}
-                            className="w-48 h-48 rounded-full border-4 border-gray-600 flex items-center justify-center hover:border-gray-500 transition-colors"
-                          >
-                            {isTimerActive ? (
-                              <PauseIcon className="h-24 w-24 text-red-500" />
-                            ) : (
-                              <PlayIcon className="h-24 w-24 text-green-500" />
-                            )}
-                          </button>
-                          <div className="flex flex-col items-center space-y-2">
-                            <div className="text-5xl font-mono">
-                              {formatTime(timeRemaining)}
-                            </div>
-                            {!isTimerActive && timeRemaining !== item.Duration * 60 && (
-                              <button
-                                onClick={(e) => resetTimer(item.ID, e)}
-                                className="flex items-center space-x-2 text-gray-400 hover:text-gray-300 transition-colors"
-                              >
-                                <ResetIcon className="h-4 w-4" />
-                                <span>Reset Timer</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                  </div>
 
-                        {/* Notes section */}
-                        <div className="mt-8 space-y-4">
-                          {/* Description */}
-                          <div className="space-y-2 px-4">
-                            <h4 className="text-sm text-gray-400 flex items-center">
-                              <Timer className="h-4 w-4 mr-2" />
-                              Things to remember
-                            </h4>
-                            <p className="text-gray-500 italic">
-                              {item.Description || "You haven't added a description for this item yet."}
-                            </p>
-                          </div>
+                  {/* Notes section */}
+                  <div className="mt-8 space-y-4">
+                    {/* Description */}
+                    <div className="space-y-2 px-4">
+                      <h4 className="text-sm text-gray-400 flex items-center">
+                        <Timer className="h-4 w-4 mr-2" />
+                        Things to remember
+                      </h4>
+                      <p className="text-gray-500 italic">
+                        {item['F'] || "You haven't added a description for this item yet."}  {/* Column F is Description */}
+                      </p>
+                    </div>
 
-                          {/* Notes toggle */}
-                          <div 
-                            className="flex items-center justify-between p-2 hover:bg-gray-700 rounded cursor-pointer"
-                            onClick={(e) => toggleNotes(item.ID, e)}
-                          >
-                            <div className="flex items-center">
-                              {isNotesExpanded ? (
-                                <ChevronDown className="h-5 w-5 text-gray-400 mr-2" />
-                              ) : (
-                                <ChevronRight className="h-5 w-5 text-gray-400 mr-2" />
-                              )}
-                              <h3 className="text-xl text-gray-300 flex items-center">
-                                <FileText className="h-5 w-5 mr-2" />
-                                Notes
-                              </h3>
-                            </div>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="text-gray-300"
-                              onClick={(e) => {
-                                e.stopPropagation();  // Stop event from bubbling up
-                                addNote(item['Item ID'], e);
-                              }}
-                            >
-                              <Plus className="h-4 w-4 mr-2" />
-                              {itemNotes ? 'Edit note' : 'Add note'}
-                            </Button>
-                          </div>
+                    {/* Notes toggle */}
+                    <div 
+                      className="flex items-center justify-between p-2 hover:bg-gray-700 rounded cursor-pointer"
+                      onClick={(e) => toggleNotes(routineItem['A'], e)}  // Column A is ID
+                    >
+                      <div className="flex items-center">
+                        {isNotesExpanded ? (
+                          <ChevronDown className="h-5 w-5 text-gray-400 mr-2" />
+                        ) : (
+                          <ChevronRight className="h-5 w-5 text-gray-400 mr-2" />
+                        )}
+                        <h3 className="text-xl text-gray-300 flex items-center">
+                          <FileText className="h-5 w-5 mr-2" />
+                          Notes
+                        </h3>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="text-gray-300"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          addNote(routineItem['B'], e);  // Column B is Item ID
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        {itemNotes ? 'Edit note' : 'Add note'}
+                      </Button>
+                    </div>
 
-                          {/* Collapsible notes content */}
-                          {isNotesExpanded && itemNotes && (
-                            <div className="px-4">
-                              <div className="bg-gray-700 p-3 rounded">
-                                <p className="text-gray-300 whitespace-pre-wrap">{itemNotes}</p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Mark as done button */}
-                        <div className="mt-8">
-                          <Button
-                            variant="outline"
-                            className="w-full text-gray-300 hover:text-white"
-                            onClick={(e) => toggleComplete(item.ID, e)}
-                          >
-                            Mark as done
-                          </Button>
+                    {/* Collapsible notes content */}
+                    {isNotesExpanded && itemNotes && (
+                      <div className="px-4">
+                        <div className="bg-gray-700 p-3 rounded">
+                          <p className="text-gray-300 whitespace-pre-wrap">{itemNotes}</p>
                         </div>
                       </div>
                     )}
                   </div>
-                );
-              })}
+
+                  {/* Mark as done button */}
+                  <div className="mt-8">
+                    <Button
+                      variant="outline"
+                      className="w-full text-gray-300 hover:text-white"
+                      onClick={(e) => toggleComplete(routineItem['A'], e)}  // Column A is ID
+                    >
+                      Mark as done
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-          </CardContent>
-          <NoteEditor
-            open={isNoteEditorOpen}
-            onOpenChange={setIsNoteEditorOpen}
-            itemId={editingNoteItemId}
-            currentNote={notes[editingNoteItemId] || ''}
-            onNoteSave={handleNoteSave}
-          />
-        </Card>
-      )}
-    </>
+          );
+        })}
+      </div>
+    </div>
   );
 }; 

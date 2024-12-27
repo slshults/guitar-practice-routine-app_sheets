@@ -21,6 +21,16 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@ui/alert-dialog";
 
 // Split out item component for better state isolation
 const SortableItem = React.memo(({ item, onEdit, onDelete }) => {
@@ -31,7 +41,7 @@ const SortableItem = React.memo(({ item, onEdit, onDelete }) => {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.ID });
+  } = useSortable({ id: item['A'] });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -42,7 +52,7 @@ const SortableItem = React.memo(({ item, onEdit, onDelete }) => {
   const handleDelete = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    await onDelete(item.ID);
+    await onDelete(item['A']);
   };
 
   return (
@@ -57,7 +67,7 @@ const SortableItem = React.memo(({ item, onEdit, onDelete }) => {
         <div {...attributes} {...listeners}>
           <GripVertical className="h-6 w-6 text-gray-500 mr-4 cursor-move" />
         </div>
-        <span className="text-xl">{item.Title}</span>
+        <span className="text-xl">{item['C']}</span>
       </div>
       <div className="flex space-x-3">
         <Button
@@ -88,17 +98,24 @@ export const PracticeItemsList = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [itemToDelete, setItemToDelete] = useState(null);
 
   const handleDelete = async (itemId) => {
     if (isDragging) return; // Prevent delete during drag
+    setItemToDelete(itemId);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
     setIsDeleting(true);
     try {
-      await deleteItem(itemId);
+      await deleteItem(itemToDelete);
       await refreshItems(); // Force refresh
     } catch (err) {
       console.error('Delete failed:', err);
     } finally {
       setIsDeleting(false);
+      setItemToDelete(null);
     }
   };
 
@@ -111,6 +128,12 @@ export const PracticeItemsList = () => {
     await refreshItems();
   };
 
+  const handleSave = async () => {
+    await refreshItems();
+    setEditingItem(null);
+    setIsEditOpen(false);
+  };
+
   const handleDragStart = () => {
     setIsDragging(true);
   };
@@ -119,8 +142,8 @@ export const PracticeItemsList = () => {
     setIsDragging(false);
     if (isDeleting || !active || !over || active.id === over.id) return;
   
-    const oldIndex = items.findIndex(item => item.ID === active.id);
-    const newIndex = items.findIndex(item => item.ID === over.id);
+    const oldIndex = items.findIndex(item => item['A'] === active.id);
+    const newIndex = items.findIndex(item => item['A'] === over.id);
     
     try {
       // Create new array with moved item
@@ -129,7 +152,7 @@ export const PracticeItemsList = () => {
       // Update all orders to match new positions
       const withNewOrder = reordered.map((item, index) => ({
         ...item,
-        order: index
+        'G': index
       }));
       
       // Send complete new state
@@ -155,7 +178,7 @@ export const PracticeItemsList = () => {
   );
 
   const filteredItems = items.filter((item) =>
-    item?.Title?.toLowerCase().includes(searchQuery.toLowerCase())
+    item?.['C']?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   if (loading) return <div className="text-2xl text-center p-8">Loading practice items...</div>;
@@ -195,13 +218,13 @@ export const PracticeItemsList = () => {
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={filteredItems.map(item => item.ID)}
+              items={filteredItems.map(item => item['A'])}
               strategy={verticalListSortingStrategy}
             >
               <div className="space-y-4">
                 {filteredItems.map((item) => (
                   <SortableItem
-                    key={item.ID}
+                    key={item['A']}
                     item={item}
                     onEdit={handleEditClick}
                     onDelete={handleDelete}
@@ -213,12 +236,37 @@ export const PracticeItemsList = () => {
         </CardContent>
       </Card>
 
-      <ItemEditor
-        open={isEditOpen}
-        onOpenChange={setIsEditOpen}
-        item={editingItem}
-        onItemChange={handleItemChange}
-      />
+      {isEditOpen && (
+        <ItemEditor
+          open={isEditOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingItem(null);
+              setIsEditOpen(false);
+            }
+          }}
+          item={editingItem}
+          onItemChange={handleSave}
+        />
+      )}
+
+      <AlertDialog open={!!itemToDelete} onOpenChange={() => setItemToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the practice item
+              and remove it from all routines.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

@@ -37,7 +37,7 @@ export const usePracticeItems = () => {
         throw new Error('Failed to delete item');
       }
       // Update local state immediately
-      setItems(current => current.filter(item => item.ID !== itemId));
+      setItems(current => current.filter(item => item['A'] !== itemId));  // Column A for ID
       // Force a refresh to ensure sync
       await refreshItems();
     } catch (err) {
@@ -50,14 +50,14 @@ export const usePracticeItems = () => {
   const handleDragEnd = async ({ active, over }) => {
     if (active.id !== over?.id) {
       setSortedItems((items) => {
-        const oldIndex = items.findIndex((item) => item.ID === active.id);
-        const newIndex = items.findIndex((item) => item.ID === over.id);
+        const oldIndex = items.findIndex((item) => item['A'] === active.id);  // Column A for ID
+        const newIndex = items.findIndex((item) => item['A'] === over.id);    // Column A for ID
         const reordered = arrayMove(items, oldIndex, newIndex);
         
         // Add order field to each item
         const withOrder = reordered.map((item, idx) => ({
           ...item,
-          order: idx
+          'G': idx  // Column G for order
         }));
         
         // Update backend
@@ -109,7 +109,7 @@ export const usePracticeItems = () => {
       }
       const updated = await response.json();
       setItems(items.map(item => 
-        item.ID === itemId ? updated : item
+        item['A'] === itemId ? updated : item  // Column A for ID
       ));
       return updated;
     } catch (err) {

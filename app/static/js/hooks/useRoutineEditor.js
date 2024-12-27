@@ -1,10 +1,11 @@
 // app/static/js/hooks/useRoutineEditor.js
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePracticeItems } from './usePracticeItems';
 
 export const useRoutineEditor = (routineName = null) => {
   const { items: allItems } = usePracticeItems();
   const [selectedItems, setSelectedItems] = useState([]);
+  const [itemDetails, setItemDetails] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -19,12 +20,46 @@ export const useRoutineEditor = (routineName = null) => {
     }
   }, [routineName]);
 
+  // Fetch item details when needed
+  const fetchItemDetails = useCallback(async (itemId) => {
+    try {
+      const response = await fetch(`/api/items/${itemId}`);
+      if (!response.ok) throw new Error('Failed to fetch item details');
+      const data = await response.json();
+      setItemDetails(prev => ({
+        ...prev,
+        [itemId]: data
+      }));
+      return data;
+    } catch (err) {
+      console.error('Error fetching item details:', err);
+      return null;
+    }
+  }, []);
+
   const fetchRoutine = async () => {
     try {
       const response = await fetch(`/api/routines/${routineName}`);
       if (!response.ok) throw new Error('Failed to fetch routine');
-      const data = await response.json();
-      setSelectedItems(data);
+      const routineItems = await response.json();
+
+      // Fetch details for each item
+      const itemPromises = routineItems.map(async (routineItem) => {
+        // routineItem will have values from columns A (ID), B (Item ID), C (order), H (completed)
+        const details = itemDetails[routineItem['B']] || 
+          await fetchItemDetails(routineItem['B']);
+        return {
+          ...routineItem,
+          'A': routineItem['A'],  // ID
+          'B': routineItem['B'],  // Item ID
+          'C': routineItem['C'],  // order
+          'H': routineItem['H'],  // completed
+          'Title': details?.['C'] || 'Loading...',  // Add title for display using Column C
+        };
+      });
+
+      const itemsWithDetails = await Promise.all(itemPromises);
+      setSelectedItems(itemsWithDetails);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -36,27 +71,28 @@ export const useRoutineEditor = (routineName = null) => {
 
   // Filter available items based on search query and exclude selected items
   const availableItems = useMemo(() => {
-    const selectedItemIds = new Set(selectedItems.map(item => item['Item ID']));
+    const selectedItemIds = new Set(selectedItems.map(item => item['B']));  // Column B is Item ID
     return allItems.filter(item => 
-      !selectedItemIds.has(item.ID) && 
-      item.Title.toLowerCase().includes(searchQuery.toLowerCase())
+      !selectedItemIds.has(item['A']) &&  // Column A is ID
+      item['C']?.toLowerCase().includes(searchQuery.toLowerCase())  // Column C is Title
     );
   }, [allItems, selectedItems, searchQuery]);
 
-  const addToRoutine = async (routineName, itemId, notes = "") => {
+  const addToRoutine = async (routineName, itemId) => {
     try {
       const response = await fetch(`/api/routines/${routineName}/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, notes })
+        body: JSON.stringify({ itemId })
       });
+
       if (!response.ok) throw new Error('Failed to add item to routine');
-      const data = await response.json();
-      setSelectedItems(current => [...current, data]);
+      
+      // Refresh the routine to get updated items
+      await fetchRoutine();
       return true;
     } catch (err) {
-      setError(err.message);
-      console.error('Add error:', err);
+      console.error('Error adding item:', err);
       return false;
     }
   };
@@ -66,12 +102,14 @@ export const useRoutineEditor = (routineName = null) => {
       const response = await fetch(`/api/routines/${routineName}/items/${itemId}`, {
         method: 'DELETE'
       });
+
       if (!response.ok) throw new Error('Failed to remove item from routine');
-      setSelectedItems(current => current.filter(item => item.ID !== itemId));
+      
+      // Refresh the routine to get updated items
+      await fetchRoutine();
       return true;
     } catch (err) {
-      setError(err.message);
-      console.error('Remove error:', err);
+      console.error('Error removing item:', err);
       return false;
     }
   };
@@ -83,29 +121,14 @@ export const useRoutineEditor = (routineName = null) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(items)
       });
-      if (!response.ok) throw new Error('Failed to update routine order');
-      const data = await response.json();
-      setSelectedItems(data);
-      return true;
-    } catch (err) {
-      setError(err.message);
-      console.error('Update error:', err);
-      return false;
-    }
-  };
 
-  const createRoutine = async (name) => {
-    try {
-      const response = await fetch('/api/routines', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ routineName: name })
-      });
-      if (!response.ok) throw new Error('Failed to create routine');
+      if (!response.ok) throw new Error('Failed to update routine order');
+      
+      // Update local state
+      setSelectedItems(items);
       return true;
     } catch (err) {
-      setError(err.message);
-      console.error('Create error:', err);
+      console.error('Error updating order:', err);
       return false;
     }
   };
@@ -117,9 +140,8 @@ export const useRoutineEditor = (routineName = null) => {
     setSearchQuery,
     loading,
     error,
-    createRoutine,
     addToRoutine,
     removeFromRoutine,
-    updateRoutineOrder
+    updateRoutineOrder,
   };
 };

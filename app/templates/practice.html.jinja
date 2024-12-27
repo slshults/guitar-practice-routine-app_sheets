@@ -5,12 +5,12 @@
     <h3>NOTES</h3>
     <div class="notes-header">
         <span>THINGS TO REMEMBER</span>
-        <button id="add-note-btn-{{item['Item ID']}}" class="add-note-btn">+ ADD NOTE</button>
+        <button id="add-note-btn-{{item['B']}}" class="add-note-btn">+ ADD NOTE</button>
     </div>
     <textarea 
-        id="item-notes-{{item['Item ID']}}" 
+        id="item-notes-{{item['B']}}"
         class="notes-input"
         placeholder="Add notes about this item..."
-    >{{item.notes if item.notes else ''}}</textarea>
+    >{{item['D'] if item['D'] else ''}}</textarea>
 </div>
 {% endblock %} 

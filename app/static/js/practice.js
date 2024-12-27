@@ -49,7 +49,7 @@ function loadItem(item) {
         console.log('Warning: loadItem called with no item');
         return;
     }
-    if (!item.ID) {
+    if (!item['A']) {  // Column A is ID
         console.log('Warning: item has no ID:', item);
         return;
     }
@@ -57,14 +57,14 @@ function loadItem(item) {
     console.log('Loading item:', item);
     
     // Add notes handling
-    const notesTextarea = document.getElementById(`item-notes-${item.ID}`);
-    const addNoteBtn = document.getElementById(`add-note-btn-${item.ID}`);
+    const notesTextarea = document.getElementById(`item-notes-${item['A']}`);  // Column A is ID
+    const addNoteBtn = document.getElementById(`add-note-btn-${item['A']}`);  // Column A is ID
     
     if (notesTextarea) {
-        console.log('Found textarea for item:', item.ID);
+        console.log('Found textarea for item:', item['A']);  // Column A is ID
         
         // Fetch current notes from the Items sheet
-        fetch(`/api/items/${item.ID}/notes`)
+        fetch(`/api/items/${item['A']}/notes`)  // Column A is ID
             .then(response => response.json())
             .then(data => {
                 notesTextarea.value = data.notes || '';
@@ -75,19 +75,19 @@ function loadItem(item) {
                 // Add the event listener
                 notesTextarea.addEventListener('input', (event) => {
                     console.log('Note input event triggered');
-                    handleNoteInput(event, item.ID);
+                    handleNoteInput(event, item['A']);  // Column A is ID
                 });
             })
             .catch(error => {
                 console.error('Error loading notes:', error);
             });
     }
-    
+
     if (addNoteBtn) {
-        addNoteBtn.removeEventListener('click', () => addNote(item.ID));
+        addNoteBtn.removeEventListener('click', () => addNote(item['A']));  // Column A is ID
         addNoteBtn.addEventListener('click', () => {
             console.log('Add note button clicked');
-            addNote(item.ID);
+            addNote(item['A']);  // Column A is ID
         });
     }
 }
@@ -118,8 +118,8 @@ function addNote(itemId) {
 function initializeNotes(itemId) {
     console.log('Initializing notes for item:', itemId);
     const item = {
-        ID: itemId,
-        Notes: document.getElementById(`item-notes-${itemId}`)?.value || ''
+        'A': itemId,  // Column A is ID
+        'D': document.getElementById(`item-notes-${itemId}`)?.value || ''  // Column D is Notes
     };
     loadItem(item);
 }

@@ -6,7 +6,7 @@ from app.sheets import ( # type: ignore
     test_sheets_connection, get_credentials, update_items_order,
     create_routine, update_routine_order, update_routine_item,
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
-    get_worksheet, get_spread
+    get_worksheet, get_spread, sheet_to_records
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -27,8 +27,19 @@ def items():
     if request.method == 'GET':
         return jsonify(get_all_items())
     elif request.method == 'POST':
+        app.logger.debug("Received POST request to create item")
+        app.logger.debug(f"Request Content-Type: {request.headers.get('Content-Type')}")
+        app.logger.debug(f"Request body: {request.get_data(as_text=True)}")
+        
+        if not request.is_json:
+            app.logger.error("Request is not JSON")
+            return jsonify({"error": "Request must be JSON"}), 400
+            
         new_item = request.json
-        return jsonify(add_item(new_item))
+        app.logger.debug(f"Creating new item with data: {new_item}")
+        result = add_item(new_item)
+        app.logger.debug(f"Item creation result: {result}")
+        return jsonify(result)
 
 @app.route('/api/items/order', methods=['PUT'])
 def order_items():
@@ -46,6 +57,8 @@ def item(item_id):
         
     if request.method == 'PUT':
         updated_item = request.json
+        logging.debug(f"Received PUT request for item {item_id}")
+        logging.debug(f"Request data: {updated_item}")
         return jsonify(update_item(item_id, updated_item))
     elif request.method == 'DELETE':
         delete_item(item_id)
@@ -312,7 +325,7 @@ def save_item_notes(item_id):
         worksheet = spread.worksheet('Items')
         
         # Find the row with this item_id
-        items = worksheet.get_all_records()
+        items = sheet_to_records(worksheet, is_routine_worksheet=False)
         for item in items:
             if item['ID'] == item_id:
                 return jsonify({'notes': item.get('Notes', '')})
@@ -329,23 +342,27 @@ def save_item_notes(item_id):
     spread = get_spread()
     worksheet = spread.worksheet('Items')
     
-    # Find the row with this item_id
-    items = worksheet.get_all_records()
-    row_idx = None
+    # Convert to records for ID-based lookup
+    items = sheet_to_records(worksheet, is_routine_worksheet=False)
+    
+    # Find the item with matching ID
+    target_item = None
+    target_row_idx = None
     for idx, item in enumerate(items):
         if item['ID'] == item_id:
-            row_idx = idx + 2  # +2 because sheets is 1-based and has header row
-            app.logger.debug(f"DEBUG:save_notes:Found item {item_id} at row {row_idx}")
+            target_item = item
+            target_row_idx = idx + 2  # +2 for 1-based index and header row
+            app.logger.debug(f"DEBUG:save_notes:Found item {item_id} at row {target_row_idx}")
             break
     
-    if row_idx is None:
+    if target_item is None:
         app.logger.debug(f"DEBUG:save_notes:Item {item_id} not found!")
         return jsonify({'error': 'Item not found'}), 404
-
-    # Update the Notes column (column D is index 4)
-    app.logger.debug(f"DEBUG:save_notes:Updating cell at row {row_idx}, col 4 with text: {note_text}")
+        
+    # Update the Notes column (column D)
+    app.logger.debug(f"DEBUG:save_notes:Updating cell at row {target_row_idx}, col D with text: {note_text}")
     try:
-        worksheet.update_cell(row_idx, 4, note_text)
+        worksheet.update(f'D{target_row_idx}', note_text)
         app.logger.debug("DEBUG:save_notes:Update successful")
     except Exception as e:
         app.logger.error(f"DEBUG:save_notes:Error updating cell: {str(e)}")
@@ -368,11 +385,11 @@ def toggle_item_complete(routine_name, item_id):
         worksheet = spread.worksheet(routine_name)
         
         # Find the row with this item_id
-        items = worksheet.get_all_records()
+        items = sheet_to_records(worksheet, is_routine_worksheet=True)
         row_idx = None
         for idx, item in enumerate(items):
             app.logger.debug(f"Checking item: {item}")  # Debug log
-            if item['ID'] == item_id:  # Direct dictionary access
+            if item['ID'] == item_id:
                 row_idx = idx + 2  # +2 because sheets is 1-based and has header row
                 app.logger.debug(f"Found item at row {row_idx}")
                 break
@@ -385,10 +402,10 @@ def toggle_item_complete(routine_name, item_id):
         completed = request.json.get('completed', False)
         app.logger.debug(f"Setting completed state to: {completed}")
         
-        # Always use column H (index 8) for completed state
+        # Always use column D for completed state
         completed_value = 'TRUE' if completed else 'FALSE'
-        worksheet.update_cell(row_idx, 8, completed_value)
-        app.logger.debug(f"Updated cell at row {row_idx}, col H with value {completed_value}")
+        worksheet.update(f'D{row_idx}', completed_value)
+        app.logger.debug(f"Updated cell at row {row_idx}, col D with value {completed_value}")
         
         return jsonify({'success': True, 'completed': completed})
     except Exception as e:
@@ -403,16 +420,18 @@ def reset_routine_progress(routine_name):
         spread = get_spread()
         worksheet = spread.worksheet(routine_name)
         
-        # Ensure completed column exists in column H
+        # Ensure completed column exists in column D
         ensure_completed_column(worksheet)
         
         # Get all items
-        items = worksheet.get_all_records()
+        items = sheet_to_records(worksheet, is_routine_worksheet=True)
         
-        # Update all completed states to FALSE in column H
-        for idx, _ in enumerate(items):
-            row_idx = idx + 2  # +2 because sheets is 1-based and has header row
-            worksheet.update_cell(row_idx, 8, 'FALSE')
+        # Create a list of FALSE values for all data rows
+        if items:  # Only update if there are rows to update
+            false_values = [['FALSE'] for _ in range(len(items))]
+            # Update all cells in column D starting from D2
+            range_end = f'D{len(items) + 1}'  # +1 because items doesn't include header row
+            worksheet.update(f'D2:{range_end}', false_values)
         
         app.logger.debug("Reset complete")
         return jsonify({'success': True})
@@ -421,23 +440,20 @@ def reset_routine_progress(routine_name):
         return jsonify({'error': str(e)}), 500
 
 def ensure_completed_column(worksheet):
-    """Ensure the worksheet has a completed column in column H"""
+    """Ensure the worksheet has a completed column in column D"""
     try:
-        # Check if column H exists and has the correct header
-        try:
-            header = worksheet.cell(1, 8).value  # Column H is index 8
-        except:
-            header = None
-        
-        if header != 'completed':
-            # Set header
-            worksheet.update_cell(1, 8, 'completed')
-            # Initialize all rows with FALSE
-            all_values = worksheet.get_all_values()
-            for i in range(2, len(all_values) + 1):
-                worksheet.update_cell(i, 8, 'FALSE')
+        # Get all values
+        all_values = worksheet.get_all_values()
+        if len(all_values) > 1:  # If there are data rows
+            # Create a list of FALSE values for all data rows
+            false_values = [['FALSE'] for _ in range(len(all_values) - 1)]
+            # Update all cells in column D starting from D2
+            if false_values:  # Only update if there are rows to update
+                range_end = f'D{len(all_values)}'
+                worksheet.update(f'D2:{range_end}', false_values)
             
-        app.logger.debug("Completed column verified in column H")
+        logging.debug("Completed column verified in column D")
+        return True
     except Exception as e:
-        app.logger.error(f"Error ensuring completed column: {str(e)}")
+        logging.error(f"Error ensuring completed column: {str(e)}")
         raise

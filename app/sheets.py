@@ -11,34 +11,10 @@ from functools import lru_cache
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Define column structure once to ensure consistency
-COLUMN_STRUCTURE = [
-    {'name': 'ID', 'type': 'int', 'default': '1'},           # Routine item entry ID
-    {'name': 'Item ID', 'type': 'int', 'default': '0'},      # Reference to main Items sheet
-    {'name': 'Title', 'type': 'str', 'default': ''},         # Copied from item for reference
-    {'name': 'Notes', 'type': 'str', 'default': ''},         # Routine-specific notes
-    {'name': 'Duration', 'type': 'str', 'default': ''},      # Copied from item
-    {'name': 'Description', 'type': 'str', 'default': ''},   # Copied from item
-    {'name': 'Tuning', 'type': 'str', 'default': ''},       # Guitar tuning for the item
-    {'name': 'order', 'type': 'int', 'default': '0'},        # For drag-drop ordering
-]
-
-ROUTINE_WORKSHEET_STRUCTURE = [
-    {'name': 'ID', 'type': 'int', 'default': '1'},           # Routine item entry ID
-    {'name': 'Item ID', 'type': 'int', 'default': '0'},      # Reference to main Items sheet
-    {'name': 'Title', 'type': 'str', 'default': ''},         # Copied from item for reference
-    {'name': 'Notes', 'type': 'str', 'default': ''},         # Routine-specific notes
-    {'name': 'Duration', 'type': 'str', 'default': ''},      # Copied from item
-    {'name': 'Description', 'type': 'str', 'default': ''},   # Copied from item
-    {'name': 'order', 'type': 'int', 'default': '0'},        # For drag-drop ordering
-]
-
-ROUTINES_COLUMN_STRUCTURE = [
-    {'name': 'ID', 'type': 'int', 'default': '1'},
-    {'name': 'RoutineName', 'type': 'str', 'default': ''},
-    {'name': 'Created', 'type': 'str', 'default': ''}, 
-    {'name': 'Order', 'type': 'int', 'default': '0'},
-]
+# Define number of columns for each sheet type
+ITEMS_COLUMNS = 8        # A through H (A=ID, B=Item ID, C=Title, D=Notes, E=Duration, F=Description, G=order, H=Tuning)
+ROUTINE_COLUMNS = 4      # A through D (A=ID, B=Item ID, C=order, D=completed)
+ROUTINES_COLUMNS = 4     # A through D
 
 @lru_cache(maxsize=1)
 def get_credentials():
@@ -101,42 +77,44 @@ def invalidate_caches():
     get_spread.cache_clear()
 
 def sheet_to_records(worksheet, is_routine_worksheet=True):
-    """Convert worksheet data to list of dictionaries with proper type conversion."""
+    """Convert worksheet data to list of dictionaries.
+    This function is header-row agnostic - it uses column letters (A, B, C...) 
+    to read and write data, ignoring whatever content might be in row 1.
+    """
     try:
-        # Get all values including headers
-        records = worksheet.get_all_records()
-        logging.debug(f"Raw records from get_all_records: {records}") 
-        if not records:
+        # Get all values starting from row 2 (data rows only)
+        data_range = worksheet.get('A2:Z')
+        if not data_range:  # No data rows
             return []
             
-        logging.debug(f"Number of records: {len(records)}")
+        data_rows = data_range
+        logging.debug(f"Number of data rows: {len(data_rows)}")
         
-        # Use correct column structure
-        column_structure = ROUTINE_WORKSHEET_STRUCTURE if is_routine_worksheet else COLUMN_STRUCTURE
+        # Get number of columns based on sheet type
+        num_columns = ROUTINE_COLUMNS if is_routine_worksheet else ITEMS_COLUMNS
         
-        # Convert types and ensure all required fields
+        # Convert rows to records using column letters (A=0, B=1, etc.)
         processed_records = []
-        for record in records:
-            case_fixed = {}
-            for col in column_structure:
-                # Get value using exact column name
-                value = record.get(col['name'], col['default'])
+        for row in data_rows:
+            record = {}
+            for idx in range(num_columns):
+                # Get value from the correct column letter position
+                value = row[idx] if idx < len(row) else ''
+                # If the value is empty or just whitespace, keep it as an empty string
+                value = str(value).strip() if value else ''
                 
-                # Convert based on type
-                if col['type'] == 'int':
-                    value = int(float(value)) if value else 0
-                elif col['type'] == 'str':
-                    value = str(value).strip()
+                # Use column letter as key (A=0, B=1, etc.)
+                col_letter = chr(ord('A') + idx)
+                record[col_letter] = value
                 
-                case_fixed[col['name']] = value
-                
-            processed_records.append(case_fixed)
+            processed_records.append(record)
         
-        # Sort by order
-        processed_records.sort(key=lambda x: x['order'])
+        # Sort by order (column G for items, C for routines)
+        order_col = 'C' if is_routine_worksheet else 'G'
+        processed_records.sort(key=lambda x: x[order_col] if x[order_col] else '0')
         
-        logging.debug(f"ID sequence: {[r.get('ID') for r in processed_records]}")
-        logging.debug(f"Order sequence: {[r.get('order') for r in processed_records]}")
+        logging.debug(f"ID sequence: {[r.get('A') for r in processed_records]}")
+        logging.debug(f"Order sequence: {[r.get(order_col) for r in processed_records]}")
         
         return processed_records
     except Exception as e:
@@ -144,28 +122,47 @@ def sheet_to_records(worksheet, is_routine_worksheet=True):
         raise
 
 def records_to_sheet(worksheet, records, is_routine_worksheet=True):
-    """Convert list of dictionaries back to sheet format."""
+    """Convert list of dictionaries back to sheet format.
+    This function is header-row agnostic - it uses column letters (A, B, C...) 
+    to read and write data, ignoring whatever content might be in row 1.
+    """
     try:
         if not records:
             return False
             
-        # Get column names from structure
-        column_structure = ROUTINE_WORKSHEET_STRUCTURE if is_routine_worksheet else COLUMN_STRUCTURE
-        headers = [col['name'] for col in column_structure]
+        # Get number of columns based on sheet type
+        num_columns = ROUTINE_COLUMNS if is_routine_worksheet else ITEMS_COLUMNS
+        logging.debug(f"Using {'routine' if is_routine_worksheet else 'items'} structure with {num_columns} columns")
             
         # Create the data rows
-        rows = [headers]  # Start with headers
+        data_rows = []
         for record in records:
             row = []
-            for header in headers:
-                # Convert values to strings
-                value = str(record.get(header, ''))
+            logging.debug(f"Processing record: {record}")
+            for idx in range(num_columns):
+                # Get value using column letter
+                col_letter = chr(ord('A') + idx)
+                value = record.get(col_letter, '')
+                # If the value is empty or just whitespace, keep it as an empty string
+                value = str(value).strip() if value else ''
                 row.append(value)
-            rows.append(row)
+            data_rows.append(row)
             
-        # Clear existing content and update with new data
-        worksheet.clear()
-        worksheet.update('A1', rows)
+        # Get the range for data rows (A2:X{last_row}) - explicitly start at row 2
+        last_col = chr(ord('A') + num_columns - 1)
+        last_row = len(data_rows) + 1  # +1 because we start at row 2
+        range_str = f'A2:{last_col}{last_row}'
+        
+        logging.debug(f"Writing to range: {range_str}")
+        logging.debug(f"Data rows to write: {data_rows}")
+        
+        # Clear existing data rows (preserve header in row 1)
+        if last_row > 1:
+            worksheet.batch_clear([range_str])
+        
+        # Update with new data if we have any, starting at row 2
+        if data_rows:
+            worksheet.update(range_str, data_rows)
         
         logging.debug(f"Updated sheet with {len(records)} records")
         
@@ -174,81 +171,22 @@ def records_to_sheet(worksheet, records, is_routine_worksheet=True):
         logging.error(f"Error in records_to_sheet: {str(e)}")
         raise
 
-def validate_sheet_structure(worksheet):
-    """Validate and fix sheet structure if needed."""
-    try:
-        # Get existing headers
-        existing_headers = worksheet.row_values(1)
-        
-        # Get required headers from column structure
-        required_headers = [col['name'] for col in COLUMN_STRUCTURE]
-        
-        # Check for missing headers
-        missing_headers = [h for h in required_headers if h not in existing_headers]
-        
-        # Check for extra headers
-        extra_headers = [h for h in existing_headers if h not in required_headers]
-        
-        if missing_headers or extra_headers:
-            # Get all current data
-            all_data = worksheet.get_all_values()
-            headers = all_data[0] if all_data else []
-            data = all_data[1:] if len(all_data) > 1 else []
-            
-            # Create mapping of column structure for defaults
-            defaults_map = {col['name']: col['default'] for col in COLUMN_STRUCTURE}
-            
-            # Create new headers list with correct order
-            new_headers = required_headers.copy()
-            
-            # Create new data rows with missing columns added and extra columns removed
-            new_data = []
-            for row in data:
-                # Create dict of current row data
-                row_dict = {h: v for h, v in zip(headers, row)}
-                
-                # Create new row with required columns
-                new_row = []
-                for header in new_headers:
-                    value = row_dict.get(header, defaults_map[header])
-                    new_row.append(value)
-                
-                new_data.append(new_row)
-            
-            # Update sheet with fixed structure
-            worksheet.clear()
-            worksheet.update('A1', [new_headers] + new_data)
-            
-            if missing_headers:
-                logging.info(f"Added missing headers: {missing_headers}")
-            if extra_headers:
-                logging.info(f"Removed extra headers: {extra_headers}")
-            
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error validating sheet structure: {str(e)}")
-        return False
-
 def ensure_completed_column(worksheet):
-    """Ensure the worksheet has a completed column in column H"""
+    """Ensure the worksheet has a completed column in column D"""
     try:
         logging.debug("Ensuring completed column exists...")
-        # Check if column H exists and has the correct header
-        try:
-            header = worksheet.cell(1, 8).value  # Column H is index 8
-        except:
-            header = None
         
-        if header != 'completed':
-            # Set header
-            worksheet.update_cell(1, 8, 'completed')
-            # Initialize all rows with FALSE
-            all_values = worksheet.get_all_values()
-            for i in range(2, len(all_values) + 1):
-                worksheet.update_cell(i, 8, 'FALSE')
+        # Get all values
+        all_values = worksheet.get_all_values()
+        if len(all_values) > 1:  # If there are data rows
+            # Create a list of FALSE values for all data rows
+            false_values = [['FALSE'] for _ in range(len(all_values) - 1)]
+            # Update all cells in column D starting from D2
+            if false_values:  # Only update if there are rows to update
+                range_end = f'D{len(all_values)}'
+                worksheet.update(f'D2:{range_end}', false_values)
             
-        logging.debug("Completed column verified in column H")
+        logging.debug("Completed column verified in column D")
         return True
     except Exception as e:
         logging.error(f"Error ensuring completed column: {str(e)}")
@@ -263,30 +201,13 @@ def initialize_routines_sheet():
         try:
             sheet = spread.worksheet('Routines')
             logging.debug("Routines sheet already exists")
-            
-            # Update headers to new format if needed
-            current_headers = sheet.row_values(1)
-            if 'Name' in current_headers and 'RoutineName' not in current_headers:
-                logging.debug("Updating headers to new format")
-                headers = [col['name'] for col in ROUTINES_COLUMN_STRUCTURE]
-                sheet.update('A1', [headers])
+            return True
                 
         except:
             logging.debug("Creating new Routines sheet")
             sheet = spread.add_worksheet('Routines', rows=1000, cols=20)
+            return True
             
-            # Extract headers from column structure
-            headers = [col['name'] for col in ROUTINES_COLUMN_STRUCTURE]
-            
-            # Initialize sheet with headers and format them
-            sheet.update('A1', [headers])
-            header_range = f'A1:{chr(ord("A") + len(headers) - 1)}1'
-            sheet.format(header_range, {
-                "textFormat": {"bold": True},
-                "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-            })
-            
-        return True
     except Exception as e:
         logging.error(f"Error initializing Routines sheet: {str(e)}")
         raise
@@ -313,10 +234,6 @@ def create_routine(routine_name):
         
         # Create new worksheet
         worksheet = spread.add_worksheet(routine_name, rows=1000, cols=20)
-        
-        # Initialize with headers
-        headers = [col['name'] for col in ROUTINE_WORKSHEET_STRUCTURE]
-        worksheet.update('A1', [headers])
         
         # Ensure completed column exists
         ensure_completed_column(worksheet)
@@ -349,7 +266,7 @@ def get_all_items():
         logging.debug("Reading from Items sheet...")
         
         worksheet = spread.worksheet('Items')
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
         
         return records
     except Exception as e:
@@ -361,34 +278,63 @@ def add_item(item):
     try:
         spread = get_spread()
         logging.debug("Starting add operation...")
+        logging.debug(f"Received item data: {item}")
+        
+        # Initialize missing columns with defaults
+        required_columns = {
+            'A': '',  # ID (will be set later)
+            'B': '',  # Item ID (same as A for items)
+            'C': '',  # Title
+            'D': '',  # Notes
+            'E': '5',  # Duration
+            'F': '',  # Description
+            'G': '',  # Order (will be set later)
+            'H': ''   # Tuning
+        }
+        
+        # Update with provided values
+        for col in required_columns:
+            if col in item:
+                required_columns[col] = item[col]
+        
+        item = required_columns  # Use our complete item dictionary
+        logging.debug(f"Normalized item data: {item}")
         
         # Get the worksheet and current records
         worksheet = spread.worksheet('Items')
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
+        logging.debug(f"Current records: {records}")
         
         # Generate new ID
-        new_id = max([r['ID'] for r in records], default=0) + 1
-        item['ID'] = new_id
+        new_id = max([int(float(r['A'])) for r in records], default=0) + 1
+        item['A'] = str(new_id)  # Column A for ID
+        item['B'] = str(new_id)  # Column B for Item ID (same as A for items)
+        logging.debug(f"Generated new ID: {new_id}")
         
         # Check for duplicate titles
-        base_title = item['Title']
+        base_title = item['C']  # Column C for Title
         count = 1
-        while any(r['Title'].lower() == item['Title'].lower() for r in records):
-            item['Title'] = f"{base_title} ({count})"
+        while any(r['C'].lower() == item['C'].lower() for r in records):  # Column C for Title
+            item['C'] = f"{base_title} ({count})"  # Column C for Title
             count += 1
+        logging.debug(f"Final title after duplicate check: {item['C']}")
         
         # Set order to end of list
-        max_order = max([r['order'] for r in records], default=-1)
-        item['order'] = max_order + 1
+        max_order = max([int(float(r['G'])) for r in records], default=-1)  # Column G for order
+        item['G'] = str(max_order + 1)  # Column G for order
+        logging.debug(f"Set order to: {item['G']}")
         
         # Add new record and save
         records.append(item)
-        success = records_to_sheet(worksheet, records)
+        logging.debug(f"Attempting to save item: {item}")
+        success = records_to_sheet(worksheet, records, is_routine_worksheet=False)
         
         if success:
+            logging.debug("Successfully saved item")
             invalidate_caches()
             return item
             
+        logging.error("Failed to save item")
         return None
     except Exception as e:
         logging.error(f"Error in add_item: {str(e)}")
@@ -399,21 +345,22 @@ def update_item(item_id, item):
     try:
         spread = get_spread()
         logging.debug(f"Starting update operation for item_id: {item_id}")
+        logging.debug(f"Received item data: {item}")
         
         # Get the worksheet and current records
         worksheet = spread.worksheet('Items')
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
         
         # Find and update the item
-        item_id = int(float(item_id))
         updated = False
         for record in records:
-            if record['ID'] == item_id:
-                # Preserve ID and order
-                item['ID'] = record['ID']
-                item['order'] = record['order']
-                # Update the record
-                record.update(item)
+            if str(record['A']) == str(item_id):  # Convert both to strings for comparison
+                logging.debug(f"Found record to update: {record}")
+                # Keep the existing record and only update the fields that were sent
+                for col_letter in item:
+                    if col_letter != 'A' and col_letter != 'G':  # Don't update ID or order
+                        record[col_letter] = item[col_letter]
+                logging.debug(f"Updated record: {record}")
                 updated = True
                 break
                 
@@ -421,7 +368,7 @@ def update_item(item_id, item):
             raise ValueError(f"Item {item_id} not found")
             
         # Write back to sheet
-        success = records_to_sheet(worksheet, records)
+        success = records_to_sheet(worksheet, records, is_routine_worksheet=False)
         if success:
             invalidate_caches()
             return item
@@ -439,27 +386,27 @@ def delete_item(item_id):
         
         # Get the worksheet and current records
         worksheet = spread.worksheet('Items')
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
         
         # Find the item to delete
         item_id = int(float(item_id))
-        deleted_item = next((item for item in records if item['ID'] == item_id), None)
+        deleted_item = next((item for item in records if int(float(item['A'])) == item_id), None)  # Column A for ID
         
         if not deleted_item:
             logging.error(f"Item {item_id} not found")
             return False
             
-        deleted_order = deleted_item['order']
+        deleted_order = int(float(deleted_item['G']))  # Column G for order
         logging.debug(f"Found item {item_id} with order {deleted_order}")
         
         # Remove the item and update orders
-        records = [r for r in records if r['ID'] != item_id]
+        records = [r for r in records if int(float(r['A'])) != item_id]  # Column A for ID
         for record in records:
-            if record['order'] > deleted_order:
-                record['order'] -= 1
+            if int(float(record['G'])) > deleted_order:  # Column G for order
+                record['G'] = str(int(float(record['G'])) - 1)  # Column G for order
                 
         # Write back to sheet
-        success = records_to_sheet(worksheet, records)
+        success = records_to_sheet(worksheet, records, is_routine_worksheet=False)
         if success:
             invalidate_caches()
             
@@ -479,10 +426,10 @@ def update_items_order(items):
         
         # Update order values to match new positions
         for i, item in enumerate(items):
-            item['order'] = i
+            item['G'] = str(i)  # Column G for order
             
         # Write back to sheet
-        success = records_to_sheet(worksheet, items)
+        success = records_to_sheet(worksheet, items, is_routine_worksheet=False)
         if success:
             invalidate_caches()
             return items
@@ -509,7 +456,7 @@ def get_routine(routine_name):
     if not worksheet:
         raise ValueError(f"Routine '{routine_name}' not found")
         
-    records = sheet_to_records(worksheet)
+    records = sheet_to_records(worksheet, is_routine_worksheet=True)
     return records
 
 def get_active_routine():
@@ -569,21 +516,16 @@ def get_all_routine_records():
     try:
         spread = get_spread()
         worksheet = spread.worksheet('Routines')
-        records = worksheet.get_all_records()
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
         
         # Convert all keys to lowercase for case-insensitive access
         normalized_records = []
         for record in records:
-            # First convert all keys to lowercase
-            lower_record = {k.lower(): v for k, v in record.items()}
-            
-            # Then create normalized record with proper field names
             normalized_record = {
-                'ID': lower_record.get('id', 0),
-                # Try routinename first, then name, then Name as fallbacks
-                'RoutineName': lower_record.get('routinename') or lower_record.get('name') or lower_record.get('Name', ''),
-                'Created': lower_record.get('created', ''),
-                'Order': lower_record.get('order', 0)
+                'ID': record.get('ID', 0),
+                'RoutineName': record.get('RoutineName', ''),
+                'Created': record.get('Created', ''),
+                'Order': record.get('Order', 0)
             }
             normalized_records.append(normalized_record)
             
@@ -627,7 +569,7 @@ def test_sheets_connection():
     try:
         spread = get_spread()
         worksheet = spread.worksheet('Items')
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=False)
         logging.debug(f"Read {len(records)} items from the sheet")
         
         return {
@@ -657,22 +599,12 @@ def add_to_routine(routine_name, item_id, notes=""):
         # Set order to end of list
         max_order = max([r.get('order', 0) for r in records], default=-1)
         
-        # Get item details from main Items sheet
-        items_sheet = spread.worksheet('Items')
-        items = sheet_to_records(items_sheet, is_routine_worksheet=False)
-        item = next((i for i in items if i['ID'] == item_id), None)
-        
-        if not item:
-            raise ValueError(f"Item {item_id} not found in Items sheet")
-        
+        # Create new record with minimal fields
         new_record = {
             'ID': new_id,
             'Item ID': item_id,
-            'Title': item.get('Title', ''),
-            'Notes': notes,
-            'Duration': item.get('Duration', ''),
-            'Description': item.get('Description', ''),
-            'order': max_order + 1
+            'order': max_order + 1,
+            'completed': 'FALSE'
         }
         
         # Add new record and save
@@ -754,7 +686,7 @@ def update_routine_item(routine_name, item_id, item):
     try:
         spread = get_spread()
         worksheet = spread.worksheet(routine_name)
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=True)
         
         # Find and update the item
         item_id = int(float(item_id))
@@ -773,7 +705,7 @@ def update_routine_item(routine_name, item_id, item):
             raise ValueError(f"Item {item_id} not found in routine {routine_name}")
             
         # Write back to sheet
-        success = records_to_sheet(worksheet, records)
+        success = records_to_sheet(worksheet, records, is_routine_worksheet=True)
         if success:
             invalidate_caches()
             return item
@@ -788,7 +720,7 @@ def remove_from_routine(routine_name, item_id):
     try:
         spread = get_spread()
         worksheet = spread.worksheet(routine_name)
-        records = sheet_to_records(worksheet)
+        records = sheet_to_records(worksheet, is_routine_worksheet=True)
         
         # Find the item to delete
         item_id = int(float(item_id))
@@ -808,7 +740,7 @@ def remove_from_routine(routine_name, item_id):
                 record['order'] -= 1
                 
         # Write back to sheet
-        success = records_to_sheet(worksheet, records)
+        success = records_to_sheet(worksheet, records, is_routine_worksheet=True)
         if success:
             invalidate_caches()
             

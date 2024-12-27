@@ -29,7 +29,22 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-// Sortable item in the selected items list
+// Available item in the search list
+const AvailableItem = React.memo(({ item, onAdd }) => (
+  <div className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
+    <span className="text-lg">{item.Title}</span>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => onAdd(item)}
+      className="text-blue-500 hover:text-blue-400"
+    >
+      <Plus className="h-4 w-4" />
+    </Button>
+  </div>
+));
+
+// Sortable item component for selected items
 const SortableRoutineItem = React.memo(({ item, onRemove }) => {
   const {
     attributes,
@@ -40,11 +55,8 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
     isDragging,
   } = useSortable({ id: item.ID });
 
-  const style = transform ? {
+  const style = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 1 : 0,
-  } : {
     transition,
     zIndex: isDragging ? 1 : 0,
   };
@@ -53,9 +65,9 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center justify-between p-4 rounded-lg ${
+      className={`flex items-center justify-between p-4 ${
         isDragging ? 'bg-gray-700' : 'bg-gray-800'
-      }`}
+      } rounded-lg`}
     >
       <div className="flex items-center">
         <div {...attributes} {...listeners}>
@@ -74,21 +86,6 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
     </div>
   );
 });
-
-// Available item in the search list
-const AvailableItem = React.memo(({ item, onAdd }) => (
-  <div className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
-    <span className="text-lg">{item.Title}</span>
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => onAdd(item)}
-      className="text-blue-500 hover:text-blue-400"
-    >
-      <Plus className="h-4 w-4" />
-    </Button>
-  </div>
-));
 
 export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineChange }) => {
   const {
