@@ -150,6 +150,8 @@ export const usePracticeItems = () => {
     items,
     loading,
     error,
+    addItem,
+    updateItem,
     deleteItem,
     updateItems,
     refreshItems

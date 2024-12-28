@@ -34,6 +34,26 @@ import {
 
 // Sortable item component for active routine items
 const SortableItem = React.memo(({ item }) => {
+  const [itemDetails, setItemDetails] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchItemDetails = async () => {
+      try {
+        const response = await fetch(`/api/items/${item['B']}`);
+        if (!response.ok) throw new Error('Failed to fetch item details');
+        const data = await response.json();
+        setItemDetails(data);
+      } catch (err) {
+        console.error('Error fetching item details:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchItemDetails();
+  }, [item['B']]);
+
   const {
     attributes,
     listeners,
@@ -41,7 +61,7 @@ const SortableItem = React.memo(({ item }) => {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.ID });
+  } = useSortable({ id: item['A'] });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -61,8 +81,13 @@ const SortableItem = React.memo(({ item }) => {
         <div {...attributes} {...listeners}>
           <GripVertical className="h-5 w-5 text-gray-500 mr-4 cursor-move" />
         </div>
-        <span className="text-lg">{item.Title}</span>
+        <span className="text-lg">
+          {loading ? 'Loading...' : (itemDetails?.['C'] || `Item ${item['B']}`)}
+        </span>
       </div>
+      {item['D'] === 'TRUE' && (
+        <CheckCircle2 className="h-5 w-5 text-green-500" />
+      )}
     </div>
   );
 });
@@ -237,17 +262,19 @@ const RoutinesPage = () => {
     setIsDragging(false);
     if (!active || !over || active.id === over.id) return;
 
-    const oldIndex = activeRoutineItems.findIndex(item => item.ID === active.id);
-    const newIndex = activeRoutineItems.findIndex(item => item.ID === over.id);
+    const oldIndex = activeRoutineItems.findIndex(item => item['A'] === active.id);
+    const newIndex = activeRoutineItems.findIndex(item => item['A'] === over.id);
 
     try {
       // Create new array with moved item
       const reordered = arrayMove(activeRoutineItems, oldIndex, newIndex);
       
-      // Update all orders to match new positions
+      // Update all orders to match new positions, keeping only essential columns
       const withNewOrder = reordered.map((item, index) => ({
-        ...item,
-        order: index
+        'A': item['A'],           // ID (routine entry ID)
+        'B': item['B'],           // Item ID (reference to Items sheet)
+        'C': index.toString(),    // Order
+        'D': item['D'] || 'FALSE' // Completed
       }));
       
       // Update UI optimistically
@@ -357,13 +384,13 @@ const RoutinesPage = () => {
                     onDragEnd={handleDragEnd}
                   >
                     <SortableContext
-                      items={activeRoutineItems.map(item => item.ID)}
+                      items={activeRoutineItems.map(item => item['A'])}
                       strategy={verticalListSortingStrategy}
                     >
                       <div className="space-y-2 mt-4">
                         {activeRoutineItems.map((item) => (
                           <SortableItem
-                            key={item.ID}
+                            key={item['A']}
                             item={item}
                           />
                         ))}

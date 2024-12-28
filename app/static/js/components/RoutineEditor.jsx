@@ -32,7 +32,7 @@ import { CSS } from '@dnd-kit/utilities';
 // Available item in the search list
 const AvailableItem = React.memo(({ item, onAdd }) => (
   <div className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
-    <span className="text-lg">{item.Title}</span>
+    <span className="text-lg">{item['C']}</span>
     <Button
       variant="ghost"
       size="sm"
@@ -53,7 +53,7 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.ID });
+  } = useSortable({ id: item.routineEntry['A'] });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -73,12 +73,12 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
         <div {...attributes} {...listeners}>
           <GripVertical className="h-5 w-5 text-gray-500 mr-4 cursor-move" />
         </div>
-        <span className="text-lg">{item.Title}</span>
+        <span className="text-lg">{item.itemDetails?.['C'] || 'Loading...'}</span>
       </div>
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => onRemove(item.ID)}
+        onClick={() => onRemove(item.routineEntry['A'])}
         className="text-red-500 hover:text-red-400"
       >
         <X className="h-4 w-4" />
@@ -91,6 +91,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
   const {
     availableItems,
     selectedItems,
+    setSelectedItems,
     searchQuery,
     setSearchQuery,
     loading,
@@ -124,14 +125,71 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
   );
 
   const handleDragEnd = async ({ active, over }) => {
+    console.log('handleDragEnd called with:', { active, over });
+    
     if (active.id !== over?.id) {
-      const oldIndex = selectedItems.findIndex(item => item.ID === active.id);
-      const newIndex = selectedItems.findIndex(item => item.ID === over.id);
+      console.log('Active and over IDs are different, proceeding with reorder');
       
+      const oldIndex = selectedItems.findIndex(item => item.routineEntry['A'] === active.id);
+      const newIndex = selectedItems.findIndex(item => item.routineEntry['A'] === over.id);
+      console.log('Found indices:', { oldIndex, newIndex });
+      
+      // Create new array with items in new positions
       const reordered = arrayMove(selectedItems, oldIndex, newIndex);
+      console.log('Reordered items:', reordered);
+      
+      // Get all items that need their order updated
+      const startIdx = Math.min(oldIndex, newIndex);
+      const endIdx = Math.max(oldIndex, newIndex);
+      console.log('Update range:', { startIdx, endIdx });
+      
+      // Create new array with updated orders
+      const withNewOrder = reordered.map((item, index) => {
+        const routineEntry = { ...item.routineEntry };
+        
+        // Update order for all items in the affected range
+        if (index >= startIdx && index <= endIdx) {
+          routineEntry['C'] = index.toString();
+          console.log(`Updating order for item ${routineEntry['A']} to ${index}`);
+        }
+        
+        return {
+          routineEntry,
+          itemDetails: item.itemDetails
+        };
+      });
+      
+      // Update local state first for immediate UI feedback
+      setSelectedItems(withNewOrder);
+      console.log('Updated local state with:', withNewOrder);
+      
       if (routine?.name) {
-        await updateRoutineOrder(routine.name, reordered);
+        try {
+          // Send all items that had their order changed
+          const changedOrders = withNewOrder
+            .filter((item, idx) => idx >= startIdx && idx <= endIdx)
+            .map(item => ({
+              'A': item.routineEntry['A'],  // ID
+              'C': item.routineEntry['C']   // New order
+            }));
+          
+          console.log('Sending order update to backend:', {
+            routineName: routine.name,
+            changedOrders
+          });
+          
+          await updateRoutineOrder(routine.name, changedOrders);
+          console.log('Backend update successful');
+        } catch (error) {
+          console.error('Failed to update routine order:', error);
+          // Revert to previous state on error
+          setSelectedItems(selectedItems);
+        }
+      } else {
+        console.log('No routine name available, skipping backend update');
       }
+    } else {
+      console.log('Active and over IDs are the same, no reorder needed');
     }
   };
 
@@ -140,10 +198,16 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
       setError(null);
       if (!routine?.name) {
         // For new routines, just update local state
-        setSelectedItems(prev => [...prev, item]);
+        setSelectedItems(prev => [...prev, {
+          'A': item['A'],  // ID
+          'B': item['B'],  // Item ID
+          'C': prev.length.toString(),  // Order
+          'D': 'FALSE',  // Completed
+          ...item  // Include all other item properties
+        }]);
       } else {
         // For existing routines, call API through the hook
-        const success = await addToRoutine(routine.name, item.ID);
+        const success = await addToRoutine(routine.name, item['B']);  // Use Item ID from column B
         if (!success) {
           throw new Error('Failed to add item to routine');
         }
@@ -156,15 +220,15 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
     }
   };
 
-  const handleRemoveItem = async (itemId) => {
+  const handleRemoveItem = async (routineEntryId) => {
     try {
       setError(null);
       if (!routine?.name) {
         // For new routines, just update local state
-        setSelectedItems(prev => prev.filter(item => item.ID !== itemId));
+        setSelectedItems(prev => prev.filter(item => item.routineEntry['A'] !== routineEntryId));
       } else {
-        // For existing routines, call API through the hook
-        const success = await removeFromRoutine(routine.name, itemId);
+        // For existing routines, call API through the hook with routine entry ID
+        const success = await removeFromRoutine(routine.name, routineEntryId);
         if (!success) {
           throw new Error('Failed to remove item from routine');
         }
@@ -216,7 +280,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
             <CardContent className="space-y-4 overflow-y-auto h-[calc(100%-100px)]">
               {availableItems.map(item => (
                 <AvailableItem
-                  key={item.ID}
+                  key={item['A']}
                   item={item}
                   onAdd={handleAddItem}
                 />
@@ -245,13 +309,13 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
                 onDragEnd={handleDragEnd}
               >
                 <SortableContext
-                  items={selectedItems.map(item => item.ID)}
+                  items={selectedItems.map(item => item.routineEntry['A'])}
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="space-y-4">
                     {selectedItems.map((item) => (
                       <SortableRoutineItem
-                        key={item.ID}
+                        key={item.routineEntry['A']}
                         item={item}
                         onRemove={handleRemoveItem}
                       />

@@ -47,15 +47,22 @@ def order_items():
     items = request.json
     return jsonify(update_items_order(items))
 
-@app.route('/api/items/<item_id>', methods=['PUT', 'DELETE'])
+@app.route('/api/items/<item_id>', methods=['GET', 'PUT', 'DELETE'])
 def item(item_id):
-    """Handle PUT (update) and DELETE for individual items"""
+    """Handle GET (fetch), PUT (update) and DELETE for individual items"""
     try:
         item_id = int(float(item_id))
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid item ID"}), 400
         
-    if request.method == 'PUT':
+    if request.method == 'GET':
+        # Get all items and find the requested one
+        all_items = get_all_items()
+        item = next((item for item in all_items if int(float(item['A'])) == item_id), None)
+        if item:
+            return jsonify(item)
+        return jsonify({"error": "Item not found"}), 404
+    elif request.method == 'PUT':
         updated_item = request.json
         logging.debug(f"Received PUT request for item {item_id}")
         logging.debug(f"Request data: {updated_item}")
@@ -134,20 +141,19 @@ def update_routine_order_route(routine_name):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>/items/<int:item_id>', methods=['PUT', 'DELETE'])
+@app.route('/api/routines/<routine_name>/items/<item_id>', methods=['PUT', 'DELETE'])
 def routine_item_operations(routine_name, item_id):
-    """Update or remove an item from a routine"""
-    try:
-        if request.method == 'PUT':
-            updated_item = request.json
-            return jsonify(update_routine_item(routine_name, item_id, updated_item))
-        elif request.method == 'DELETE':
-            remove_from_routine(routine_name, item_id)
+    """Handle operations on items within a routine"""
+    if request.method == 'DELETE':
+        if remove_from_routine(routine_name, item_id):
             return '', 204
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to remove item from routine"}), 400
+    elif request.method == 'PUT':
+        item = request.json
+        result = update_routine_item(routine_name, item_id, item)
+        if result:
+            return jsonify(result)
+        return jsonify({"error": "Failed to update routine item"}), 400
 
 @app.route('/api/routines/<routine_name>/items', methods=['POST'])
 def add_item_to_routine(routine_name):
