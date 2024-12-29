@@ -6,7 +6,8 @@ from app.sheets import ( # type: ignore
     test_sheets_connection, get_credentials, update_items_order,
     create_routine, update_routine_order, update_routine_item,
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
-    get_worksheet, get_spread, sheet_to_records
+    get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
+    records_to_sheet
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -118,27 +119,61 @@ def routines():
             app.logger.error(f"Error processing routine creation request: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>', methods=['GET', 'DELETE'])
-def routine_operations(routine_name):
+@app.route('/api/routines/<int:routine_id>', methods=['GET', 'DELETE'])
+def routine_operations(routine_id):
     """Handle GET (details) and DELETE for individual routines"""
     try:
         if request.method == 'GET':
-            return jsonify(get_routine(routine_name))
+            # Get the worksheet using routine ID as sheet name
+            spread = get_spread()
+            worksheet = spread.worksheet(str(routine_id))
+            routine_data = sheet_to_records(worksheet, is_routine_worksheet=True)
+            return jsonify(routine_data)
         elif request.method == 'DELETE':
-            result = delete_routine(routine_name)
+            result = delete_routine(str(routine_id))
             if result:
                 return '', 204
             return jsonify({"error": "Failed to delete routine"}), 500
     except Exception as e:
+        app.logger.error(f"Error in routine_operations: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>/order', methods=['PUT'])
-def update_routine_order_route(routine_name):
+@app.route('/api/routines/<int:routine_id>/order', methods=['PUT'])
+def update_routine_order_route(routine_id):
     """Update the order of items in a routine"""
     try:
+        app.logger.debug(f"Received order update request for routine: {routine_id}")
         items = request.json
-        return jsonify(update_routine_order(routine_name, items))
+        app.logger.debug(f"Items to reorder: {items}")
+        
+        # Get the worksheet using routine ID as sheet name
+        spread = get_spread()
+        worksheet = spread.worksheet(str(routine_id))
+        app.logger.debug(f"Found worksheet for routine: {routine_id}")
+        
+        # Get existing items to preserve all data
+        existing_items = sheet_to_records(worksheet, is_routine_worksheet=True)
+        app.logger.debug(f"Existing items: {existing_items}")
+        
+        # Create a map of routine entry IDs to their new order
+        new_orders = {item['A']: item['C'] for item in items}
+        app.logger.debug(f"New orders map: {new_orders}")
+        
+        # Update only the order (column C) for each item
+        for item in existing_items:
+            if item['A'] in new_orders:
+                item['C'] = new_orders[item['A']]
+                
+        # Write back to sheet
+        success = records_to_sheet(worksheet, existing_items, is_routine_worksheet=True)
+        if success:
+            app.logger.debug(f"Successfully updated order for routine: {routine_id}")
+            return jsonify(existing_items)
+            
+        app.logger.error(f"Failed to write updated order to sheet for routine: {routine_id}")
+        return jsonify({"error": "Failed to update order"}), 500
     except Exception as e:
+        app.logger.error(f"Error updating routine order: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/routines/<routine_name>/items/<item_id>', methods=['PUT', 'DELETE'])
@@ -258,39 +293,22 @@ def oauth2callback():
     
 @app.route('/api/routines/active', methods=['GET'])
 def get_active_routine_route():
-    """Get the currently active routine"""
+    """Get the ID of the currently active routine"""
     try:
-        app.logger.debug("Fetching active routine name...")
-        active_name = get_active_routine()
-        app.logger.debug(f"Active routine name: {active_name}")
-        
-        if not active_name:
-            app.logger.debug("No active routine found")
-            return jsonify({"active_routine": None})
-            
-        # Get the full routine data
-        app.logger.debug(f"Fetching routine data for: {active_name}")
-        routine_data = get_routine(active_name)
-        app.logger.debug(f"Got routine data: {routine_data}")
-        
-        response = {
-            "active_routine": {
-                "name": active_name,
-                "items": routine_data
-            }
-        }
-        app.logger.debug(f"Sending response: {response}")
-        return jsonify(response)
+        app.logger.debug("Fetching active routine ID")
+        active_id = get_active_routine()
+        app.logger.debug(f"Active routine ID: {active_id}")
+        return jsonify({"active_id": active_id})
     except Exception as e:
-        app.logger.error(f"Error in get_active_routine_route: {str(e)}")
+        app.logger.error(f"Error getting active routine: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>/active', methods=['PUT'])
-def set_routine_active_route(routine_name):
+@app.route('/api/routines/<int:routine_id>/active', methods=['PUT'])
+def set_routine_active_route(routine_id):
     """Set a routine as active or inactive"""
     try:
         # Add debug logging
-        app.logger.debug(f"Received activate request for routine: {routine_name}")
+        app.logger.debug(f"Received activate request for routine ID: {routine_id}")
         app.logger.debug(f"Request JSON: {request.json}")
         
         if not request.is_json:
@@ -299,7 +317,7 @@ def set_routine_active_route(routine_name):
         active = request.json.get('active', True)  # Default to activating
         app.logger.debug(f"Setting active status to: {active}")
         
-        success = set_routine_active(routine_name, active)
+        success = set_routine_active(str(routine_id), active)
         if success:
             return jsonify({"success": True, "active": active})
         return jsonify({"error": "Failed to update routine status"}), 500
@@ -333,8 +351,8 @@ def save_item_notes(item_id):
         # Find the row with this item_id
         items = sheet_to_records(worksheet, is_routine_worksheet=False)
         for item in items:
-            if item['ID'] == item_id:
-                return jsonify({'notes': item.get('Notes', '')})
+            if item['A'] == str(item_id):  # Just convert route param to string once
+                return jsonify({'notes': item.get('D', '')})  # Column D is Notes
         
         app.logger.debug(f"DEBUG:get_notes:Item {item_id} not found!")
         return jsonify({'error': 'Item not found'}), 404
@@ -355,7 +373,7 @@ def save_item_notes(item_id):
     target_item = None
     target_row_idx = None
     for idx, item in enumerate(items):
-        if item['ID'] == item_id:
+        if item['A'] == str(item_id):  # Just convert route param to string once
             target_item = item
             target_row_idx = idx + 2  # +2 for 1-based index and header row
             app.logger.debug(f"DEBUG:save_notes:Found item {item_id} at row {target_row_idx}")
@@ -382,26 +400,34 @@ def items_page():
     items = get_all_items()
     return render_template('items.html.jinja', items=items)
 
-@app.route('/api/routines/<routine_name>/items/<int:item_id>/complete', methods=['PUT'])
-def toggle_item_complete(routine_name, item_id):
+@app.route('/api/routines/<int:routine_id>/items/<int:item_id>/complete', methods=['PUT'])
+def toggle_item_complete(routine_id, item_id):
     """Toggle completion state of an item in a routine"""
     try:
-        app.logger.debug(f"Toggling completion for item {item_id} in routine {routine_name}")
-        spread = get_spread()
-        worksheet = spread.worksheet(routine_name)
+        app.logger.debug(f"Toggling completion for item {item_id} in routine {routine_id}")
+        try:
+            # Use routine_id directly as sheet name
+            spread = get_spread()
+            worksheet = spread.worksheet(str(routine_id))  # Sheet name is the routine ID
+            app.logger.debug(f"Got worksheet for routine {routine_id}")
+        except Exception as sheet_error:
+            app.logger.error(f"Failed to get worksheet: {str(sheet_error)}")
+            return jsonify({'error': f"Failed to get worksheet: {str(sheet_error)}"}), 500
         
-        # Find the row with this item_id
+        # Find the row with this routine entry ID (column A)
         items = sheet_to_records(worksheet, is_routine_worksheet=True)
+        app.logger.debug(f"Converted sheet to records, got {len(items)} items")
+        
         row_idx = None
         for idx, item in enumerate(items):
             app.logger.debug(f"Checking item: {item}")  # Debug log
-            if item['ID'] == item_id:
+            if item['A'] == str(item_id):  # Look for routine entry ID in column A
                 row_idx = idx + 2  # +2 because sheets is 1-based and has header row
                 app.logger.debug(f"Found item at row {row_idx}")
                 break
         
         if row_idx is None:
-            app.logger.error(f"Item {item_id} not found in routine {routine_name}")
+            app.logger.error(f"Item {item_id} not found in routine {routine_id}")
             return jsonify({'error': 'Item not found'}), 404
 
         # Get the current completed state
@@ -410,21 +436,44 @@ def toggle_item_complete(routine_name, item_id):
         
         # Always use column D for completed state
         completed_value = 'TRUE' if completed else 'FALSE'
-        worksheet.update(f'D{row_idx}', completed_value)
-        app.logger.debug(f"Updated cell at row {row_idx}, col D with value {completed_value}")
+        app.logger.debug(f"About to update cell D{row_idx} to {completed_value}")
+        try:
+            # Get current value before update
+            current_value = worksheet.acell(f'D{row_idx}').value
+            app.logger.debug(f"Current value in D{row_idx}: {current_value}")
+            
+            worksheet.update(f'D{row_idx}', completed_value)
+            
+            # Verify the update
+            new_value = worksheet.acell(f'D{row_idx}').value
+            app.logger.debug(f"New value in D{row_idx}: {new_value}")
+            
+            if new_value == completed_value:
+                app.logger.debug(f"Successfully updated cell D{row_idx} to {completed_value}")
+            else:
+                app.logger.error(f"Update failed - value is still {new_value}")
+                return jsonify({'error': f"Update failed - value is still {new_value}"}), 500
+                
+        except Exception as update_error:
+            app.logger.error(f"Failed to update cell: {str(update_error)}")
+            app.logger.error(f"Error type: {type(update_error)}")
+            app.logger.error(f"Error details: {update_error.__dict__}")
+            return jsonify({'error': f"Failed to update cell: {str(update_error)}"}), 500
         
         return jsonify({'success': True, 'completed': completed})
     except Exception as e:
         app.logger.error(f"Error toggling item completion: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Error type: {type(e)}")
+        app.logger.error(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
+        return jsonify({'error': f"Error toggling item completion: {str(e)}"}), 500
 
-@app.route('/api/routines/<routine_name>/reset', methods=['POST'])
-def reset_routine_progress(routine_name):
+@app.route('/api/routines/<int:routine_id>/reset', methods=['POST'])
+def reset_routine_progress(routine_id):
     """Reset all items' completion state in a routine"""
     try:
-        app.logger.debug(f"Resetting progress for routine: {routine_name}")
+        app.logger.debug(f"Resetting progress for routine: {routine_id}")
         spread = get_spread()
-        worksheet = spread.worksheet(routine_name)
+        worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         
         # Ensure completed column exists in column D
         ensure_completed_column(worksheet)

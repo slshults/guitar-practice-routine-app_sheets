@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePracticeItems } from './usePracticeItems';
 
-export const useRoutineEditor = (routineName = null) => {
+export const useRoutineEditor = (routineId = null) => {
   const { items: allItems } = usePracticeItems();
   const [selectedItems, setSelectedItems] = useState([]);
   const [itemDetails, setItemDetails] = useState({});
@@ -12,13 +12,13 @@ export const useRoutineEditor = (routineName = null) => {
 
   // Load existing routine if editing
   useEffect(() => {
-    if (routineName) {
+    if (routineId) {
       fetchRoutine();
     } else {
       setSelectedItems([]);
       setLoading(false);
     }
-  }, [routineName]);
+  }, [routineId]);
 
   // Fetch item details when needed
   const fetchItemDetails = useCallback(async (itemId) => {
@@ -39,9 +39,7 @@ export const useRoutineEditor = (routineName = null) => {
 
   const fetchRoutine = async () => {
     try {
-      // Encode the routine name for the URL to handle spaces and special characters
-      const encodedRoutineName = encodeURIComponent(routineName);
-      const response = await fetch(`/api/routines/${encodedRoutineName}`);
+      const response = await fetch(`/api/routines/${routineId}`);
       if (!response.ok) throw new Error('Failed to fetch routine');
       const routineItems = await response.json();
 
@@ -99,9 +97,9 @@ export const useRoutineEditor = (routineName = null) => {
     return filtered;
   }, [allItems, selectedItems, searchQuery]);
 
-  const addToRoutine = async (routineName, itemId) => {
+  const addToRoutine = async (routineId, itemId) => {
     try {
-      const response = await fetch(`/api/routines/${routineName}/items`, {
+      const response = await fetch(`/api/routines/${routineId}/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId })
@@ -118,11 +116,9 @@ export const useRoutineEditor = (routineName = null) => {
     }
   };
 
-  const removeFromRoutine = async (routineName, routineEntryId) => {
+  const removeFromRoutine = async (routineId, routineEntryId) => {
     try {
-      // Encode the routine name for the URL
-      const encodedRoutineName = encodeURIComponent(routineName);
-      const response = await fetch(`/api/routines/${encodedRoutineName}/items/${routineEntryId}`, {
+      const response = await fetch(`/api/routines/${routineId}/items/${routineEntryId}`, {
         method: 'DELETE'
       });
 
@@ -143,10 +139,10 @@ export const useRoutineEditor = (routineName = null) => {
     }
   };
 
-  const updateRoutineOrder = async (routineName, items) => {
+  const updateRoutineOrder = async (routineId, items) => {
     try {
       console.log('updateRoutineOrder called with:', {
-        routineName,
+        routineId,
         items
       });
 
@@ -158,9 +154,7 @@ export const useRoutineEditor = (routineName = null) => {
 
       console.log('Sending to backend:', routineEntries);
 
-      // Encode the routine name for the URL to handle spaces and special characters
-      const encodedRoutineName = encodeURIComponent(routineName);
-      const response = await fetch(`/api/routines/${encodedRoutineName}/order`, {
+      const response = await fetch(`/api/routines/${routineId}/order`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(routineEntries)

@@ -234,14 +234,14 @@ def create_routine(routine_name):
         current_routines = get_all_routine_records()
         
         # Check for duplicate names (case insensitive)
-        if any(r['RoutineName'].lower() == routine_name for r in current_routines):
+        if any(r['B'].lower() == routine_name for r in current_routines):  # Column B for name
             raise ValueError(f"Routine '{routine_name}' already exists")
             
         # Generate new ID
-        new_id = max([r['ID'] for r in current_routines], default=0) + 1
+        new_id = max([int(float(r['A'])) for r in current_routines], default=0) + 1  # Column A for ID
         
         # Generate new order
-        new_order = max([r['Order'] for r in current_routines], default=-1) + 1
+        new_order = max([int(float(r['D'])) for r in current_routines], default=-1) + 1  # Column D for order
         
         # Create new worksheet
         worksheet = spread.add_worksheet(routine_name, rows=1000, cols=20)
@@ -251,21 +251,21 @@ def create_routine(routine_name):
         
         # Add entry to Routines index
         new_routine = [
-            str(new_id),                # ID
-            routine_name,               # RoutineName
-            datetime.now().isoformat(), # Created
-            str(new_order)             # Order
+            str(new_id),                # Column A: ID
+            routine_name,               # Column B: name
+            datetime.now().isoformat(), # Column C: created
+            str(new_order)             # Column D: order
         ]
         routines_sheet.append_row(new_routine)
         
         invalidate_caches()
         return {
             'ID': new_id,
-            'RoutineName': routine_name,
-            'created': new_routine[2],  # Fixed index to match new structure
+            'name': routine_name,
+            'created': new_routine[2],
             'order': new_order
         }
-            
+        
     except Exception as e:
         logging.error(f"Error in create_routine: {str(e)}")
         raise
@@ -471,7 +471,7 @@ def get_routine(routine_name):
     return records
 
 def get_active_routine():
-    """Get the currently active routine name."""
+    """Get the currently active routine ID."""
     try:
         spread = get_spread()
         
@@ -482,20 +482,19 @@ def get_active_routine():
             sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
             sheet.update('A1', '')
             
-        # Get active routine name (or empty string) - convert to lowercase for consistency
-        active_name = sheet.acell('A1').value
-        return active_name.lower() if active_name else None
+        # Get active routine ID
+        active_id = sheet.acell('A1').value
+        return active_id if active_id else None
         
     except Exception as e:
         logging.error(f"Error getting active routine: {str(e)}")
         return None
 
-def set_routine_active(routine_name, active=True):
+def set_routine_active(routine_id, active=True):
     """Set the active status of a routine."""
     try:
         spread = get_spread()
-        logging.debug(f"Setting routine active status: {routine_name}, active={active}")
-        routine_name = routine_name.lower()  # Convert to lowercase for consistency
+        logging.debug(f"Setting routine active status: {routine_id}, active={active}")
         
         # Get or create ActiveRoutine sheet
         try:
@@ -503,17 +502,17 @@ def set_routine_active(routine_name, active=True):
         except:
             sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
         
-        # If activating, simply write the name
+        # If activating, simply write the ID
         if active:
-            sheet.update('A1', routine_name)
-            logging.debug(f"Set {routine_name} as active routine")
+            sheet.update('A1', str(routine_id))
+            logging.debug(f"Set {routine_id} as active routine")
             return True
             
         # If deactivating, only clear if this routine is active
         current = sheet.acell('A1').value
-        if current and current.lower() == routine_name:
+        if current and current == str(routine_id):
             sheet.update('A1', '')
-            logging.debug(f"Cleared active routine {routine_name}")
+            logging.debug(f"Cleared active routine {routine_id}")
             return True
             
         return True  # No-op if deactivating non-active routine
@@ -536,7 +535,7 @@ def get_all_routine_records():
 def get_all_routines():
     """Get all routines with metadata and active status."""
     spread = get_spread()
-    active_name = get_active_routine()
+    active_id = get_active_routine()
     
     # Get complete routine records from Routines index sheet
     routine_records = get_all_routine_records()
@@ -544,13 +543,13 @@ def get_all_routines():
     # Add active status to each record
     routines = []
     for record in routine_records:
-        # Preserve the original case from the sheet for display
+        # Compare IDs to determine active status
         routine = {
-            'ID': record['A'],
-            'name': record['B'],
-            'created': record['C'],
-            'order': record['D'],
-            'active': record['B'].lower() == (active_name.lower() if active_name else '')
+            'ID': record['A'],  # Column A for ID
+            'name': record['B'],  # Column B for name
+            'created': record['C'],  # Column C for created date
+            'order': record['D'],  # Column D for order
+            'active': record['A'] == active_id if active_id else False  # Compare IDs
         }
         routines.append(routine)
     
@@ -662,25 +661,26 @@ def delete_routine(routine_id):
         
         # Get routine info from Routines sheet
         routines = get_all_routine_records()
-        routine = next((r for r in routines if r['ID'] == routine_id), None)
+        routine = next((r for r in routines if r['A'] == routine_id), None)  # Column A for ID
         
         if not routine:
             raise ValueError(f"Routine with ID {routine_id} not found")
             
         # Delete the worksheet
-        worksheet = spread.worksheet(routine['RoutineName'])
+        worksheet = spread.worksheet(routine['B'])  # Column B for name
         spread.del_worksheet(worksheet)
         
         # Remove from Routines index
         routines_sheet = spread.worksheet('Routines')
         records = sheet_to_records(routines_sheet)
-        updated_records = [r for r in records if r['ID'] != routine_id]
+        updated_records = [r for r in records if r['A'] != routine_id]  # Column A for ID
         
         # Update order for remaining routines
-        deleted_order = routine['Order']
+        deleted_order = int(float(routine['D']))  # Column D for order
         for record in updated_records:
-            if record['Order'] > deleted_order:
-                record['Order'] -= 1
+            current_order = int(float(record['D']))  # Column D for order
+            if current_order > deleted_order:
+                record['D'] = str(current_order - 1)  # Column D for order
                 
         # Write back to sheet
         success = records_to_sheet(routines_sheet, updated_records)

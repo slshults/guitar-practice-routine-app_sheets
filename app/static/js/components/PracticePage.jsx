@@ -54,21 +54,58 @@ export const PracticePage = () => {
   const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [activeTimers, setActiveTimers] = useState(new Set());
   const [itemDetails, setItemDetails] = useState({});
+  const [completedItems, setCompletedItems] = useState(new Set());
   const completedItemIds = useMemo(() => {
     if (routine?.items) {
       return new Set(
         routine.items
           .filter(item => item['D'] === 'TRUE')  // Column D is completed status
-          .map(item => item['A'])  // Column A is ID
+          .map(item => item['A'])  // Column A is routine entry ID
       );
     }
     return new Set();
-  });
+  }, [routine]);
+
+  // Effect to sync completedItems with completedItemIds when routine changes
+  useEffect(() => {
+    setCompletedItems(completedItemIds);
+  }, [completedItemIds]);
+
   const [timers, setTimers] = useState({});
   const [notes, setNotes] = useState({});
   const [isNoteEditorOpen, setIsNoteEditorOpen] = useState(false);
   const [editingNoteItemId, setEditingNoteItemId] = useState(null);
   
+  // Define fetchItemDetails before using it
+  const fetchItemDetails = useCallback(async (itemId) => {
+    try {
+      const response = await fetch(`/api/items/${itemId}`);
+      if (!response.ok) throw new Error('Failed to fetch item details');
+      const data = await response.json();
+      setItemDetails(prev => ({
+        ...prev,
+        [itemId]: data
+      }));
+    } catch (error) {
+      console.error('Error fetching item details:', error);
+    }
+  }, []);
+
+  // Add effect to fetch item details when routine loads
+  useEffect(() => {
+    if (routine?.items) {
+      // Get unique Item IDs from column B
+      const itemIds = new Set(routine.items.map(item => item['B']));
+      
+      // Fetch details for each unique Item ID
+      itemIds.forEach(itemId => {
+        if (!itemDetails[itemId]) {  // Only fetch if we don't have the details yet
+          fetchItemDetails(itemId);
+        }
+      });
+    }
+  }, [routine, itemDetails, fetchItemDetails]); // Include all dependencies
+
   // Create audio context for timer completion sound
   const audioContext = useRef(null);
   const oscillator = useRef(null);
@@ -191,21 +228,6 @@ export const PracticePage = () => {
     return () => clearInterval(interval);
   }, [activeTimers]);
 
-  // New function to fetch item details
-  const fetchItemDetails = useCallback(async (itemId) => {
-    try {
-      const response = await fetch(`/api/items/${itemId}`);
-      if (!response.ok) throw new Error('Failed to fetch item details');
-      const data = await response.json();
-      setItemDetails(prev => ({
-        ...prev,
-        [itemId]: data
-      }));
-    } catch (error) {
-      console.error('Error fetching item details:', error);
-    }
-  }, []);
-
   // Modify toggleItem to fetch item details when expanding
   const toggleItem = (itemId) => {
     setExpandedItems(prev => {
@@ -247,12 +269,12 @@ export const PracticePage = () => {
     });
   };
 
-  const toggleComplete = async (itemId, e) => {
+  const toggleComplete = async (routineEntryId, e) => {
     e?.stopPropagation(); // Prevent expand/collapse when clicking checkbox
-    const newState = !completedItemIds.has(itemId);
+    const newState = !completedItems.has(routineEntryId);
     
     try {
-      const response = await fetch(`/api/routines/${routine.name}/items/${itemId}/complete`, {
+      const response = await fetch(`/api/routines/${routine.id}/items/${routineEntryId}/complete`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -265,15 +287,15 @@ export const PracticePage = () => {
       setCompletedItems(prev => {
         const next = new Set(prev);
         if (newState) {
-          next.add(itemId);
+          next.add(routineEntryId);
           // Stop timer when marking complete
           setActiveTimers(prev => {
             const next = new Set(prev);
-            next.delete(itemId);
+            next.delete(routineEntryId);
             return next;
           });
         } else {
-          next.delete(itemId);
+          next.delete(routineEntryId);
         }
         return next;
       });
@@ -319,7 +341,7 @@ export const PracticePage = () => {
   const resetProgress = async (e) => {
     e?.stopPropagation();
     try {
-      const response = await fetch(`/api/routines/${routine.name}/reset`, {
+      const response = await fetch(`/api/routines/${routine.id}/reset`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -352,7 +374,7 @@ export const PracticePage = () => {
           const isExpanded = expandedItems.has(routineItem['A']);  // Column A is ID
           const isNotesExpanded = expandedNotes.has(routineItem['A']);
           const isTimerActive = activeTimers.has(routineItem['A']);
-          const isCompleted = completedItemIds.has(routineItem['A']);
+          const isCompleted = completedItems.has(routineItem['A']);  // Use routine entry ID for completion state
           const timeRemaining = timers[routineItem['A']] !== undefined 
             ? timers[routineItem['A']] 
             : (itemDetails[routineItem['B']]?.Duration || 5) * 60;  // Column B is Item ID

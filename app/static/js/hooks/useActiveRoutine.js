@@ -13,7 +13,7 @@ export const useActiveRoutine = () => {
         throw new Error('Failed to fetch active routine');
       }
       const data = await response.json();
-      setRoutine(data.active_routine);
+      setRoutine(data.active_id);
       setError(null);
     } catch (err) {
       setError(err.message);

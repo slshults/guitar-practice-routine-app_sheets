@@ -141,11 +141,7 @@ const RoutinesPage = () => {
 
   const handleActivateRoutine = useCallback(async (routineId) => {
     try {
-      const routine = routines.find(r => r.ID === routineId);
-      if (!routine) return;
-      
-      const routineName = routine.routineName;
-      const response = await fetch(`/api/routines/${routineName}/active`, {
+      const response = await fetch(`/api/routines/${routineId}/active`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: true })
@@ -157,14 +153,11 @@ const RoutinesPage = () => {
       console.error('Error:', error);
       setError(error.message);
     }
-  }, [routines, fetchRoutines]);
+  }, [fetchRoutines]);
 
   const handleDeactivateRoutine = useCallback(async (routineId) => {
     try {
-      const routine = routines.find(r => r.ID === routineId);
-      if (!routine) return;
-
-      const response = await fetch(`/api/routines/${routine.name}/active`, {
+      const response = await fetch(`/api/routines/${routineId}/active`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: false })
@@ -176,7 +169,7 @@ const RoutinesPage = () => {
       console.error('Error:', error);
       setError(error.message);
     }
-  }, [routines, fetchRoutines]);
+  }, [fetchRoutines]);
 
   const handleDeleteClick = useCallback((routineId) => {
     setRoutineToDelete(routines.find(r => r.ID === routineId));
@@ -186,7 +179,7 @@ const RoutinesPage = () => {
     if (!routineToDelete) return;
     
     try {
-      const response = await fetch(`/api/routines/${routineToDelete.name}`, {
+      const response = await fetch(`/api/routines/${routineToDelete.ID}`, {
         method: 'DELETE'
       });
       
@@ -222,7 +215,11 @@ const RoutinesPage = () => {
   }, [newRoutineName, fetchRoutines]);
 
   const handleEditClick = useCallback((routine) => {
-    setEditingRoutine(routine);
+    console.log('Editing routine:', routine); // For debugging
+    setEditingRoutine({
+      id: routine.ID,
+      name: routine.name
+    });
     setIsEditOpen(true);
   }, []);
 
@@ -232,27 +229,32 @@ const RoutinesPage = () => {
   }, [fetchRoutines]);
 
   const fetchActiveRoutineItems = useCallback(async () => {
-    if (!activeRoutine?.name) {
-      setActiveRoutineItems([]);
-      return;
-    }
-
     try {
-      const response = await fetch(`/api/routines/${activeRoutine.name}`);
-      if (!response.ok) throw new Error('Failed to fetch routine items');
-      const items = await response.json();
+      // First get the active routine ID from the ActiveRoutine sheet
+      const response = await fetch('/api/routines/active');
+      if (!response.ok) throw new Error('Failed to fetch active routine');
+      const data = await response.json();
+      const activeId = data.active_id;
+      
+      if (!activeId) {
+        setActiveRoutineItems([]);
+        return;
+      }
+
+      // Then fetch the items using that ID as the sheet name
+      const itemsResponse = await fetch(`/api/routines/${activeId}`);
+      if (!itemsResponse.ok) throw new Error('Failed to fetch routine items');
+      const items = await itemsResponse.json();
       setActiveRoutineItems(items);
     } catch (error) {
       console.error('Error fetching routine items:', error);
       setError(error.message);
     }
-  }, [activeRoutine?.name]);
+  }, []);
 
   useEffect(() => {
-    if (activeRoutine?.name) {
-      fetchActiveRoutineItems();
-    }
-  }, [activeRoutine?.name]);
+    fetchActiveRoutineItems();
+  }, [fetchActiveRoutineItems]);
 
   const handleDragStart = () => {
     setIsDragging(true);
@@ -266,28 +268,36 @@ const RoutinesPage = () => {
     const newIndex = activeRoutineItems.findIndex(item => item['A'] === over.id);
 
     try {
+      // First get the active routine ID
+      const response = await fetch('/api/routines/active');
+      if (!response.ok) throw new Error('Failed to fetch active routine');
+      const data = await response.json();
+      const activeId = data.active_id;
+      
+      if (!activeId) {
+        throw new Error('No active routine found');
+      }
+
       // Create new array with moved item
       const reordered = arrayMove(activeRoutineItems, oldIndex, newIndex);
       
       // Update all orders to match new positions, keeping only essential columns
       const withNewOrder = reordered.map((item, index) => ({
         'A': item['A'],           // ID (routine entry ID)
-        'B': item['B'],           // Item ID (reference to Items sheet)
         'C': index.toString(),    // Order
-        'D': item['D'] || 'FALSE' // Completed
       }));
       
       // Update UI optimistically
-      setActiveRoutineItems(withNewOrder);
+      setActiveRoutineItems(reordered);
       
-      // Send update to backend
-      const response = await fetch(`/api/routines/${activeRoutine.name}/order`, {
+      // Send update to backend using the active routine ID as sheet name
+      const orderResponse = await fetch(`/api/routines/${activeId}/order`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(withNewOrder)
       });
       
-      if (!response.ok) throw new Error('Failed to update routine order');
+      if (!orderResponse.ok) throw new Error('Failed to update routine order');
       
       // Refresh items to ensure sync
       await fetchActiveRoutineItems();

@@ -100,7 +100,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
     removeFromRoutine,
     updateRoutineOrder,
     createRoutine,
-  } = useRoutineEditor(routine?.name);
+  } = useRoutineEditor(routine?.id);
 
   const [newRoutineName, setNewRoutineName] = useState(routine?.name || '');
   const [error, setError] = useState(null);
@@ -111,6 +111,11 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
       setError(null);
     }
   }, [open]);
+
+  // For debugging
+  useEffect(() => {
+    console.log('RoutineEditor mounted with routine:', routine);
+  }, [routine]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -138,47 +143,24 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
       const reordered = arrayMove(selectedItems, oldIndex, newIndex);
       console.log('Reordered items:', reordered);
       
-      // Get all items that need their order updated
-      const startIdx = Math.min(oldIndex, newIndex);
-      const endIdx = Math.max(oldIndex, newIndex);
-      console.log('Update range:', { startIdx, endIdx });
-      
-      // Create new array with updated orders
-      const withNewOrder = reordered.map((item, index) => {
-        const routineEntry = { ...item.routineEntry };
-        
-        // Update order for all items in the affected range
-        if (index >= startIdx && index <= endIdx) {
-          routineEntry['C'] = index.toString();
-          console.log(`Updating order for item ${routineEntry['A']} to ${index}`);
-        }
-        
-        return {
-          routineEntry,
-          itemDetails: item.itemDetails
-        };
-      });
+      // Update all orders to match new positions
+      const withNewOrder = reordered.map((item, index) => ({
+        'A': item.routineEntry['A'],  // ID
+        'C': index.toString()         // New order
+      }));
       
       // Update local state first for immediate UI feedback
-      setSelectedItems(withNewOrder);
-      console.log('Updated local state with:', withNewOrder);
+      setSelectedItems(reordered);
+      console.log('Updated local state with:', reordered);
       
-      if (routine?.name) {
+      if (routine?.id) {
         try {
-          // Send all items that had their order changed
-          const changedOrders = withNewOrder
-            .filter((item, idx) => idx >= startIdx && idx <= endIdx)
-            .map(item => ({
-              'A': item.routineEntry['A'],  // ID
-              'C': item.routineEntry['C']   // New order
-            }));
-          
           console.log('Sending order update to backend:', {
-            routineName: routine.name,
-            changedOrders
+            routineId: routine.id,
+            withNewOrder
           });
           
-          await updateRoutineOrder(routine.name, changedOrders);
+          await updateRoutineOrder(routine.id, withNewOrder);
           console.log('Backend update successful');
         } catch (error) {
           console.error('Failed to update routine order:', error);
@@ -186,7 +168,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
           setSelectedItems(selectedItems);
         }
       } else {
-        console.log('No routine name available, skipping backend update');
+        console.log('No routine id available, skipping backend update');
       }
     } else {
       console.log('Active and over IDs are the same, no reorder needed');
@@ -196,7 +178,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
   const handleAddItem = async (item) => {
     try {
       setError(null);
-      if (!routine?.name) {
+      if (!routine?.id) {
         // For new routines, just update local state
         setSelectedItems(prev => [...prev, {
           'A': item['A'],  // ID
@@ -207,7 +189,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
         }]);
       } else {
         // For existing routines, call API through the hook
-        const success = await addToRoutine(routine.name, item['B']);  // Use Item ID from column B
+        const success = await addToRoutine(routine.id, item['B']);  // Use Item ID from column B
         if (!success) {
           throw new Error('Failed to add item to routine');
         }
@@ -223,12 +205,12 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
   const handleRemoveItem = async (routineEntryId) => {
     try {
       setError(null);
-      if (!routine?.name) {
+      if (!routine?.id) {
         // For new routines, just update local state
         setSelectedItems(prev => prev.filter(item => item.routineEntry['A'] !== routineEntryId));
       } else {
         // For existing routines, call API through the hook with routine entry ID
-        const success = await removeFromRoutine(routine.name, routineEntryId);
+        const success = await removeFromRoutine(routine.id, routineEntryId);
         if (!success) {
           throw new Error('Failed to remove item from routine');
         }
