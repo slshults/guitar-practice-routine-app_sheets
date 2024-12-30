@@ -164,21 +164,24 @@ export const PracticePage = () => {
 
       if (!response.ok) throw new Error('Failed to update completion state');
 
-      setCompletedItems(prev => {
-        const next = new Set(prev);
-        if (newState) {
-          next.add(routineEntryId);
-          // Stop timer when marking complete
-          setActiveTimers(prev => {
-            const next = new Set(prev);
+      const result = await response.json();
+      if (result.success) {
+        setCompletedItems(prev => {
+          const next = new Set(prev);
+          if (newState) {
+            next.add(routineEntryId);
+            // Stop timer when marking complete
+            setActiveTimers(prev => {
+              const next = new Set(prev);
+              next.delete(routineEntryId);
+              return next;
+            });
+          } else {
             next.delete(routineEntryId);
-            return next;
-          });
-        } else {
-          next.delete(routineEntryId);
-        }
-        return next;
-      });
+          }
+          return next;
+        });
+      }
     } catch (error) {
       console.error('Error updating completion state:', error);
     }

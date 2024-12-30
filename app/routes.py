@@ -102,10 +102,6 @@ def routines():
                 if result:
                     # Add a small delay to ensure sheet is ready
                     time.sleep(2)
-                    # Add completed column to new routine
-                    spread = get_spread()
-                    worksheet = spread.worksheet(routine_name)
-                    ensure_completed_column(worksheet)
                 app.logger.debug(f"Routine creation result: {result}")
                 return jsonify({"success": result}), 201
             except ValueError as ve:
@@ -483,22 +479,27 @@ def toggle_item_complete(routine_id, item_id):
         completed = request.json.get('completed', False)
         app.logger.debug(f"Setting completed state to: {completed}")
         
-        # Always use column D for completed state
-        completed_value = 'TRUE' if completed else 'FALSE'
+        # Use 'TRUE' for completed, empty string for not completed
+        completed_value = 'TRUE' if completed else ' '  # Use a space instead of empty string
         app.logger.debug(f"About to update cell D{row_idx} to {completed_value}")
         try:
             # Get current value before update
             current_value = worksheet.acell(f'D{row_idx}').value
             app.logger.debug(f"Current value in D{row_idx}: {current_value}")
             
-            worksheet.update(f'D{row_idx}', completed_value)
+            # Use batch_update to clear the cell if needed
+            if completed:
+                worksheet.update(f'D{row_idx}', completed_value)
+            else:
+                worksheet.batch_clear([f'D{row_idx}'])
             
             # Verify the update
             new_value = worksheet.acell(f'D{row_idx}').value
             app.logger.debug(f"New value in D{row_idx}: {new_value}")
             
-            if new_value == completed_value:
-                app.logger.debug(f"Successfully updated cell D{row_idx} to {completed_value}")
+            # For uncompleted items, None or empty string is success
+            if completed and new_value == completed_value or not completed and (new_value is None or new_value == ''):
+                app.logger.debug(f"Successfully updated cell D{row_idx}")
             else:
                 app.logger.error(f"Update failed - value is still {new_value}")
                 return jsonify({'error': f"Update failed - value is still {new_value}"}), 500
@@ -524,43 +525,21 @@ def reset_routine_progress(routine_id):
         spread = get_spread()
         worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         
-        # Ensure completed column exists in column D
-        ensure_completed_column(worksheet)
-        
         # Get all items
         items = sheet_to_records(worksheet, is_routine_worksheet=True)
         
-        # Create a list of FALSE values for all data rows
+        # Create a list of empty strings for all data rows
         if items:  # Only update if there are rows to update
-            false_values = [['FALSE'] for _ in range(len(items))]
+            empty_values = [[''] for _ in range(len(items))]
             # Update all cells in column D starting from D2
             range_end = f'D{len(items) + 1}'  # +1 because items doesn't include header row
-            worksheet.update(f'D2:{range_end}', false_values)
+            worksheet.update(f'D2:{range_end}', empty_values)
         
         app.logger.debug("Reset complete")
         return jsonify({'success': True})
     except Exception as e:
         app.logger.error(f"Error resetting routine progress: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-def ensure_completed_column(worksheet):
-    """Ensure the worksheet has a completed column in column D"""
-    try:
-        # Get all values
-        all_values = worksheet.get_all_values()
-        if len(all_values) > 1:  # If there are data rows
-            # Create a list of FALSE values for all data rows
-            false_values = [['FALSE'] for _ in range(len(all_values) - 1)]
-            # Update all cells in column D starting from D2
-            if false_values:  # Only update if there are rows to update
-                range_end = f'D{len(all_values)}'
-                worksheet.update(f'D2:{range_end}', false_values)
-            
-        logging.debug("Completed column verified in column D")
-        return True
-    except Exception as e:
-        logging.error(f"Error ensuring completed column: {str(e)}")
-        raise
 
 @app.route('/api/practice/active-routine', methods=['GET'])
 def get_active_routine_with_details():
