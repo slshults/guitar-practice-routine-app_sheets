@@ -53,8 +53,11 @@ export const PracticePage = () => {
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [activeTimers, setActiveTimers] = useState(new Set());
-  const [itemDetails, setItemDetails] = useState({});
-  const [completedItems, setCompletedItems] = useState(new Set());
+  const [notes, setNotes] = useState({});
+  const [isNoteEditorOpen, setIsNoteEditorOpen] = useState(false);
+  const [editingNoteItemId, setEditingNoteItemId] = useState(null);
+  const [timers, setTimers] = useState({});
+  
   const completedItemIds = useMemo(() => {
     if (routine?.items) {
       return new Set(
@@ -66,45 +69,12 @@ export const PracticePage = () => {
     return new Set();
   }, [routine]);
 
+  const [completedItems, setCompletedItems] = useState(new Set());
+
   // Effect to sync completedItems with completedItemIds when routine changes
   useEffect(() => {
     setCompletedItems(completedItemIds);
   }, [completedItemIds]);
-
-  const [timers, setTimers] = useState({});
-  const [notes, setNotes] = useState({});
-  const [isNoteEditorOpen, setIsNoteEditorOpen] = useState(false);
-  const [editingNoteItemId, setEditingNoteItemId] = useState(null);
-  
-  // Define fetchItemDetails before using it
-  const fetchItemDetails = useCallback(async (itemId) => {
-    try {
-      const response = await fetch(`/api/items/${itemId}`);
-      if (!response.ok) throw new Error('Failed to fetch item details');
-      const data = await response.json();
-      setItemDetails(prev => ({
-        ...prev,
-        [itemId]: data
-      }));
-    } catch (error) {
-      console.error('Error fetching item details:', error);
-    }
-  }, []);
-
-  // Add effect to fetch item details when routine loads
-  useEffect(() => {
-    if (routine?.items) {
-      // Get unique Item IDs from column B
-      const itemIds = new Set(routine.items.map(item => item['B']));
-      
-      // Fetch details for each unique Item ID
-      itemIds.forEach(itemId => {
-        if (!itemDetails[itemId]) {  // Only fetch if we don't have the details yet
-          fetchItemDetails(itemId);
-        }
-      });
-    }
-  }, [routine, itemDetails, fetchItemDetails]); // Include all dependencies
 
   // Create audio context for timer completion sound
   const audioContext = useRef(null);
@@ -140,95 +110,7 @@ export const PracticePage = () => {
     });
   }, []);
 
-  // Play meditation bell sound
-  const playSound = () => {
-    if (!audioContext.current) {
-      audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
-    }
-
-    // Stop previous sound if playing
-    if (oscillator.current) {
-      oscillator.current.stop();
-      oscillator.current.disconnect();
-    }
-
-    // Create multiple oscillators for a rich bell sound
-    const fundamentalFreq = 293.66; // D4 note (whole step up from middle C)
-    const oscillators = [];
-    const gains = [];
-    
-    // Frequencies for a bell-like sound (fundamental and harmonics)
-    const frequencies = [
-      fundamentalFreq,     // fundamental (D4)
-      fundamentalFreq * 2, // octave (D5)
-      fundamentalFreq * 3, // perfect fifth + octave
-      fundamentalFreq * 4.2, // major third + 2 octaves (keeping original ratio for bell character)
-    ];
-
-    // Master gain for overall volume control
-    const masterGain = audioContext.current.createGain();
-    masterGain.gain.setValueAtTime(0.8, audioContext.current.currentTime);
-    masterGain.connect(audioContext.current.destination);
-
-    frequencies.forEach((freq, i) => {
-      const osc = audioContext.current.createOscillator();
-      const gain = audioContext.current.createGain();
-      
-      osc.type = i === 0 ? 'sine' : 'sine';
-      osc.frequency.setValueAtTime(freq, audioContext.current.currentTime);
-      
-      // Set gain envelope for each component with longer sustain
-      gain.gain.setValueAtTime(0, audioContext.current.currentTime);
-      gain.gain.linearRampToValueAtTime(0.3 / (i + 1), audioContext.current.currentTime + 0.1);
-      gain.gain.exponentialRampToValueAtTime(0.2 / (i + 1), audioContext.current.currentTime + 0.5);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.current.currentTime + 10);
-      
-      osc.connect(gain);
-      gain.connect(masterGain);
-      
-      oscillators.push(osc);
-      gains.push(gain);
-      
-      osc.start();
-      osc.stop(audioContext.current.currentTime + 10);
-    });
-
-    // Store the primary oscillator for cleanup
-    oscillator.current = oscillators[0];
-  };
-
-  // Timer tick effect
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTimers(prev => {
-        const next = { ...prev };
-        let changed = false;
-
-        Object.entries(next).forEach(([itemId, time]) => {
-          if (activeTimers.has(parseInt(itemId)) && time > 0) {
-            next[itemId] = time - 1;
-            changed = true;
-
-            // Play sound when timer reaches 0
-            if (next[itemId] === 0) {
-              playSound();
-              setActiveTimers(prev => {
-                const next = new Set(prev);
-                next.delete(parseInt(itemId));
-                return next;
-              });
-            }
-          }
-        });
-
-        return changed ? next : prev;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [activeTimers]);
-
-  // Modify toggleItem to fetch item details when expanding
+  // Modify toggleItem to use item details from routine data
   const toggleItem = (itemId) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
@@ -239,14 +121,10 @@ export const PracticePage = () => {
         // Get the routine item
         const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
         if (routineItem) {
-          // Fetch item details if we don't have them yet
-          if (!itemDetails[routineItem['B']]) {  // Column B is Item ID
-            fetchItemDetails(routineItem['B']);
-          }
-          // Initialize timer when expanding
-          initTimer(itemId, itemDetails[routineItem['B']]?.Duration || 5);
+          // Initialize timer using details that are now included
+          initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
           // Fetch notes when expanding
-          fetchNotes(routineItem['B']);
+          fetchNotes(routineItem['B']);  // Column B is Item ID
         }
       }
       return next;
@@ -256,17 +134,19 @@ export const PracticePage = () => {
   const toggleTimer = (itemId, e) => {
     e?.stopPropagation(); // Prevent expand/collapse when clicking timer
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
-    initTimer(itemId, itemDetails[routineItem?.['B']]?.Duration || 5);  // Column B is Item ID
-    
-    setActiveTimers(prev => {
-      const next = new Set(prev);
-      if (next.has(itemId)) {
-        next.delete(itemId);
-      } else {
-        next.add(itemId);
-      }
-      return next;
-    });
+    if (routineItem) {
+      initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
+      
+      setActiveTimers(prev => {
+        const next = new Set(prev);
+        if (next.has(itemId)) {
+          next.delete(itemId);
+        } else {
+          next.add(itemId);
+        }
+        return next;
+      });
+    }
   };
 
   const toggleComplete = async (routineEntryId, e) => {
@@ -307,11 +187,13 @@ export const PracticePage = () => {
   const resetTimer = (itemId, e) => {
     e?.stopPropagation();
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
-    const duration = itemDetails[routineItem?.['B']]?.Duration || 5;  // Column B is Item ID
-    setTimers(prev => ({
-      ...prev,
-      [itemId]: duration * 60
-    }));
+    if (routineItem) {
+      const duration = routineItem.details?.['E'] || 5;  // Column E is Duration
+      setTimers(prev => ({
+        ...prev,
+        [itemId]: duration * 60
+      }));
+    }
   };
 
   const addNote = async (itemId, e) => {
@@ -375,11 +257,10 @@ export const PracticePage = () => {
           const isNotesExpanded = expandedNotes.has(routineItem['A']);
           const isTimerActive = activeTimers.has(routineItem['A']);
           const isCompleted = completedItems.has(routineItem['A']);  // Use routine entry ID for completion state
-          const timeRemaining = timers[routineItem['A']] !== undefined 
+          const timerValue = timers[routineItem['A']] !== undefined 
             ? timers[routineItem['A']] 
-            : (itemDetails[routineItem['B']]?.Duration || 5) * 60;  // Column B is Item ID
+            : (routineItem.details?.['E'] || 5) * 60;  // Column E is Duration
           const itemNotes = notes[routineItem['B']] || '';
-          const item = itemDetails[routineItem['B']] || {};
           
           return (
             <div
@@ -406,11 +287,39 @@ export const PracticePage = () => {
                     <ChevronRight className="h-5 w-5 text-gray-400" />
                   )}
                   <span className={`text-xl ${isCompleted ? 'line-through text-gray-500' : ''}`}>
-                    {item['C'] || 'Loading...'}  {/* Column C is Title */}
+                    {routineItem.details?.['C']}  {/* Column C is Title */}
                   </span>
                 </div>
                 <div className="flex items-center space-x-4">
-                  <span className="text-lg text-gray-400">{item['E'] || '...'} mins</span>  {/* Column E is Duration */}
+                  {routineItem.details?.['E'] && (  // Column E is Duration
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-gray-400"
+                        onClick={(e) => toggleTimer(routineItem['A'], e)}
+                      >
+                        {activeTimers.has(routineItem['A']) ? (
+                          <PauseIcon className="h-5 w-5" />
+                        ) : (
+                          <PlayIcon className="h-5 w-5" />
+                        )}
+                      </Button>
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-gray-400"
+                        onClick={(e) => resetTimer(routineItem['A'], e)}
+                      >
+                        <ResetIcon className="h-5 w-5" />
+                      </Button>
+                      
+                      <span className="text-lg font-mono">
+                        {formatTime(timerValue)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
               {isExpanded && (
@@ -429,9 +338,9 @@ export const PracticePage = () => {
                     </button>
                     <div className="flex flex-col items-center space-y-2">
                       <div className="text-5xl font-mono">
-                        {formatTime(timeRemaining)}
+                        {formatTime(timerValue)}
                       </div>
-                      {!isTimerActive && timeRemaining !== (item['E'] || 5) * 60 && (  // Column E is Duration
+                      {!isTimerActive && timerValue !== (routineItem.details?.['E'] || 5) * 60 && (  // Column E is Duration
                         <button
                           onClick={(e) => resetTimer(routineItem['A'], e)}  // Column A is ID
                           className="flex items-center space-x-2 text-gray-400 hover:text-gray-300 transition-colors"
@@ -452,7 +361,7 @@ export const PracticePage = () => {
                         Things to remember
                       </h4>
                       <p className="text-gray-500 italic">
-                        {item['F'] || "You haven't added a description for this item yet."}  {/* Column F is Description */}
+                        {routineItem.details?.['F'] || "You haven't added a description for this item yet."}  {/* Column F is Description */}
                       </p>
                     </div>
 
@@ -506,6 +415,18 @@ export const PracticePage = () => {
                       Mark as done
                     </Button>
                   </div>
+                </div>
+              )}
+              {expandedItems.has(routineItem['A']) && (
+                <div className="px-5 pb-5">
+                  <div className="text-gray-400">
+                    {routineItem.details?.['F']}  {/* Column F is Description */}
+                  </div>
+                  {routineItem.details?.['H'] && (  /* Column H is Tuning */
+                    <div className="mt-2 text-gray-500">
+                      Tuning: {routineItem.details['H']}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

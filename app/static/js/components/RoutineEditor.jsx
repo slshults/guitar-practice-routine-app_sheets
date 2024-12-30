@@ -100,7 +100,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
     removeFromRoutine,
     updateRoutineOrder,
     createRoutine,
-  } = useRoutineEditor(routine?.id);
+  } = useRoutineEditor(routine?.id, routine?.details);
 
   const [newRoutineName, setNewRoutineName] = useState(routine?.name || '');
   const [error, setError] = useState(null);

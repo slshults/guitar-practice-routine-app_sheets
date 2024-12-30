@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePracticeItems } from './usePracticeItems';
 
-export const useRoutineEditor = (routineId = null) => {
+export const useRoutineEditor = (routineId = null, initialRoutineDetails = null) => {
   const { items: allItems } = usePracticeItems();
   const [selectedItems, setSelectedItems] = useState([]);
   const [itemDetails, setItemDetails] = useState({});
@@ -10,65 +10,31 @@ export const useRoutineEditor = (routineId = null) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load existing routine if editing
+  // Initialize with provided details or fetch them
   useEffect(() => {
-    if (routineId) {
+    if (initialRoutineDetails?.items) {
+      setSelectedItems(initialRoutineDetails.items);
+      setLoading(false);
+    } else if (routineId) {
       fetchRoutine();
     } else {
       setSelectedItems([]);
       setLoading(false);
     }
-  }, [routineId]);
-
-  // Fetch item details when needed
-  const fetchItemDetails = useCallback(async (itemId) => {
-    try {
-      const response = await fetch(`/api/items/${itemId}`);
-      if (!response.ok) throw new Error('Failed to fetch item details');
-      const data = await response.json();
-      setItemDetails(prev => ({
-        ...prev,
-        [itemId]: data
-      }));
-      return data;
-    } catch (err) {
-      console.error('Error fetching item details:', err);
-      return null;
-    }
-  }, []);
+  }, [routineId, initialRoutineDetails]);
 
   const fetchRoutine = async () => {
     try {
-      const response = await fetch(`/api/routines/${routineId}`);
+      const response = await fetch(`/api/routines/${routineId}/details`);
       if (!response.ok) throw new Error('Failed to fetch routine');
-      const routineItems = await response.json();
+      const data = await response.json();
 
-      // Sort routine items by order (column C)
-      routineItems.sort((a, b) => parseInt(a['C']) - parseInt(b['C']));
-      console.log('Sorted routine items by order:', routineItems);
-
-      // Fetch details for each item
-      const itemPromises = routineItems.map(async (routineEntry) => {
-        // Get or fetch item details using the Item ID from routine's column B
-        let details = itemDetails[routineEntry['B']];
-        if (!details) {
-          details = await fetchItemDetails(routineEntry['B']);
-        }
-        
-        // Return an object that keeps routine data and item data separate
-        return {
-          routineEntry: {
-            'A': routineEntry['A'],           // Routine entry ID
-            'B': routineEntry['B'],           // Item ID (reference)
-            'C': routineEntry['C'],           // Order in routine
-            'D': routineEntry['D'] || 'FALSE' // Completed status
-          },
-          itemDetails: details || {}          // All columns from Items sheet
-        };
-      });
-
-      const itemsWithDetails = await Promise.all(itemPromises);
-      setSelectedItems(itemsWithDetails);
+      // Sort items by order (column C)
+      const sortedItems = data.items.sort((a, b) => 
+        parseInt(a.routineEntry['C']) - parseInt(b.routineEntry['C'])
+      );
+      
+      setSelectedItems(sortedItems);
       setError(null);
     } catch (err) {
       setError(err.message);

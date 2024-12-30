@@ -138,6 +138,55 @@ def routine_operations(routine_id):
         app.logger.error(f"Error in routine_operations: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/routines/<int:routine_id>/details', methods=['GET'])
+def get_routine_with_details(routine_id):
+    """Get a routine with all item details and metadata."""
+    try:
+        # Get routine metadata from Routines sheet
+        spread = get_spread()
+        routines_sheet = spread.worksheet('Routines')
+        all_routines = sheet_to_records(routines_sheet, is_routine_worksheet=False)
+        routine_meta = next((r for r in all_routines if r['A'] == str(routine_id)), None)
+        
+        if not routine_meta:
+            return jsonify({"error": "Routine not found"}), 404
+
+        # Get the routine's items
+        routine_worksheet = spread.worksheet(str(routine_id))
+        routine_items = sheet_to_records(routine_worksheet, is_routine_worksheet=True)
+
+        # Get all items from Items sheet
+        items_worksheet = spread.worksheet('Items')
+        all_items = sheet_to_records(items_worksheet, is_routine_worksheet=False)
+        items_by_id = {item['B']: item for item in all_items}  # Index by Item ID (column B)
+
+        # Combine routine items with their details
+        items_with_details = []
+        for routine_item in routine_items:
+            item_id = routine_item['B']  # Item ID from routine's column B
+            item_details = items_by_id.get(item_id, {})
+            
+            # Only include 'TRUE' for completed items, leave others empty
+            if routine_item.get('D') != 'TRUE':
+                routine_item['D'] = ''
+                
+            items_with_details.append({
+                "routineEntry": routine_item,
+                "itemDetails": item_details
+            })
+
+        return jsonify({
+            "id": routine_meta['A'],
+            "name": routine_meta['B'],
+            "created": routine_meta['C'],
+            "order": routine_meta['D'],
+            "items": items_with_details
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error getting routine with details: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/routines/<int:routine_id>/order', methods=['PUT'])
 def update_routine_order_route(routine_id):
     """Update the order of items in a routine"""
@@ -512,3 +561,50 @@ def ensure_completed_column(worksheet):
     except Exception as e:
         logging.error(f"Error ensuring completed column: {str(e)}")
         raise
+
+@app.route('/api/practice/active-routine', methods=['GET'])
+def get_active_routine_with_details():
+    """Get the active routine with all item details for the Practice page."""
+    try:
+        # Get active routine ID
+        active_id = get_active_routine()
+        if not active_id:
+            return jsonify({"active_id": None, "items": []})
+
+        # Get routine name from Routines sheet
+        spread = get_spread()
+        routines_sheet = spread.worksheet('Routines')
+        all_routines = sheet_to_records(routines_sheet, is_routine_worksheet=False)
+        routine_meta = next((r for r in all_routines if r['A'] == str(active_id)), None)
+        
+        if not routine_meta:
+            return jsonify({"error": "Active routine not found in Routines sheet"}), 404
+
+        # Get the routine's items
+        routine_worksheet = spread.worksheet(str(active_id))
+        routine_items = sheet_to_records(routine_worksheet, is_routine_worksheet=True)
+
+        # Get all items from Items sheet
+        items_worksheet = spread.worksheet('Items')
+        all_items = sheet_to_records(items_worksheet, is_routine_worksheet=False)
+        items_by_id = {item['A']: item for item in all_items}  # Index by ID
+
+        # Combine routine items with their details
+        items_with_details = []
+        for routine_item in routine_items:
+            item_id = routine_item['B']  # Item ID from routine's column B
+            item_details = items_by_id.get(item_id, {})
+            items_with_details.append({
+                "routineEntry": routine_item,
+                "itemDetails": item_details
+            })
+
+        return jsonify({
+            "active_id": active_id,
+            "name": routine_meta['B'],  # Column B contains the routine name
+            "items": items_with_details
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error getting active routine with details: {str(e)}")
+        return jsonify({"error": str(e)}), 500

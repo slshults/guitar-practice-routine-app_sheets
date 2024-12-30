@@ -33,27 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 // Sortable item component for active routine items
-const SortableItem = React.memo(({ item }) => {
-  const [itemDetails, setItemDetails] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchItemDetails = async () => {
-      try {
-        const response = await fetch(`/api/items/${item['B']}`);
-        if (!response.ok) throw new Error('Failed to fetch item details');
-        const data = await response.json();
-        setItemDetails(data);
-      } catch (err) {
-        console.error('Error fetching item details:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchItemDetails();
-  }, [item['B']]);
-
+const SortableItem = React.memo(({ item, itemDetails }) => {
   const {
     attributes,
     listeners,
@@ -81,9 +61,7 @@ const SortableItem = React.memo(({ item }) => {
         <div {...attributes} {...listeners}>
           <GripVertical className="h-5 w-5 text-gray-500 mr-4 cursor-move" />
         </div>
-        <span className="text-lg">
-          {loading ? 'Loading...' : (itemDetails?.['C'] || `Item ${item['B']}`)}
-        </span>
+        <span className="text-lg">{itemDetails?.['C'] || `Item ${item['B']}`}</span>
       </div>
       {item['D'] === 'TRUE' && (
         <CheckCircle2 className="h-5 w-5 text-green-500" />
@@ -216,12 +194,24 @@ const RoutinesPage = () => {
 
   const handleEditClick = useCallback((routine) => {
     console.log('Editing routine:', routine); // For debugging
+    
+    // Find the active routine details if this is the active routine
+    const routineDetails = routine.active ? {
+      id: routine.ID,
+      name: routine.name,
+      items: activeRoutineItems.map(item => ({
+        routineEntry: item,
+        itemDetails: item.itemDetails
+      }))
+    } : null;
+
     setEditingRoutine({
       id: routine.ID,
-      name: routine.name
+      name: routine.name,
+      details: routineDetails
     });
     setIsEditOpen(true);
-  }, []);
+  }, [activeRoutineItems]);
 
   const handleRoutineChange = useCallback(() => {
     console.log('Routine changed, refreshing list...'); // For debugging
@@ -230,27 +220,33 @@ const RoutinesPage = () => {
 
   const fetchActiveRoutineItems = useCallback(async () => {
     try {
-      // First get the active routine ID from the ActiveRoutine sheet
-      const response = await fetch('/api/routines/active');
-      if (!response.ok) throw new Error('Failed to fetch active routine');
-      const data = await response.json();
-      const activeId = data.active_id;
+      // Get active routine ID from the routines list instead of making a separate call
+      const activeRoutine = routines.find(r => r.active);
       
-      if (!activeId) {
+      if (!activeRoutine) {
         setActiveRoutineItems([]);
         return;
       }
 
-      // Then fetch the items using that ID as the sheet name
-      const itemsResponse = await fetch(`/api/routines/${activeId}`);
-      if (!itemsResponse.ok) throw new Error('Failed to fetch routine items');
-      const items = await itemsResponse.json();
-      setActiveRoutineItems(items);
+      // Fetch the routine with all details
+      const routineResponse = await fetch(`/api/routines/${activeRoutine.ID}/details`);
+      if (!routineResponse.ok) throw new Error('Failed to fetch routine details');
+      const routineData = await routineResponse.json();
+      
+      // Sort items by order
+      const sortedItems = routineData.items
+        .sort((a, b) => parseInt(a.routineEntry['C']) - parseInt(b.routineEntry['C']))
+        .map(item => ({
+          ...item.routineEntry,
+          itemDetails: item.itemDetails
+        }));
+      
+      setActiveRoutineItems(sortedItems);
     } catch (error) {
       console.error('Error fetching routine items:', error);
       setError(error.message);
     }
-  }, []);
+  }, [routines]);
 
   useEffect(() => {
     fetchActiveRoutineItems();
@@ -402,6 +398,7 @@ const RoutinesPage = () => {
                           <SortableItem
                             key={item['A']}
                             item={item}
+                            itemDetails={item.itemDetails}
                           />
                         ))}
                       </div>

@@ -8,12 +8,27 @@ export const useActiveRoutine = () => {
 
   const fetchActiveRoutine = async () => {
     try {
-      const response = await fetch('/api/routines/active');
+      const response = await fetch('/api/practice/active-routine');
       if (!response.ok) {
         throw new Error('Failed to fetch active routine');
       }
       const data = await response.json();
-      setRoutine(data.active_id);
+      
+      if (!data.active_id) {
+        setRoutine(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      setRoutine({
+        id: data.active_id,
+        name: data.name,
+        items: data.items.map(item => ({
+          ...item.routineEntry,
+          details: item.itemDetails
+        }))
+      });
       setError(null);
     } catch (err) {
       setError(err.message);
