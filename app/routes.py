@@ -138,34 +138,59 @@ def routine_operations(routine_id):
 def get_routine_with_details(routine_id):
     """Get a routine with all item details and metadata."""
     try:
-        # Get routine metadata from Routines sheet
         spread = get_spread()
-        routines_sheet = spread.worksheet('Routines')
-        all_routines = sheet_to_records(routines_sheet, is_routine_worksheet=False)
-        routine_meta = next((r for r in all_routines if r['A'] == str(routine_id)), None)
+        
+        # Batch get all required data
+        batch_data = spread.values_batch_get([
+            f"Routines!A2:D",  # Get routine metadata
+            f"{routine_id}!A2:D",  # Get routine items
+            "Items!A2:H"  # Get items data
+        ])
+        
+        # Process routine metadata
+        routines_data = batch_data['valueRanges'][0].get('values', [])
+        routine_meta = next((
+            {'A': r[0], 'B': r[1], 'C': r[2], 'D': r[3]} 
+            for r in routines_data 
+            if r[0] == str(routine_id)
+        ), None)
         
         if not routine_meta:
             return jsonify({"error": "Routine not found"}), 404
 
-        # Get the routine's items
-        routine_worksheet = spread.worksheet(str(routine_id))
-        routine_items = sheet_to_records(routine_worksheet, is_routine_worksheet=True)
+        # Process routine items
+        routine_items_data = batch_data['valueRanges'][1].get('values', [])
+        routine_items = [
+            {
+                'A': r[0],  # ID
+                'B': r[1],  # Item ID
+                'C': r[2],  # Order
+                'D': r[3] if len(r) > 3 and r[3] == 'TRUE' else ''  # Completed
+            }
+            for r in routine_items_data
+        ]
 
-        # Get all items from Items sheet
-        items_worksheet = spread.worksheet('Items')
-        all_items = sheet_to_records(items_worksheet, is_routine_worksheet=False)
-        items_by_id = {item['B']: item for item in all_items}  # Index by Item ID (column B)
+        # Process items data
+        items_data = batch_data['valueRanges'][2].get('values', [])
+        items_by_id = {
+            r[1]: {  # Index by Item ID (column B)
+                'A': r[0],  # ID
+                'B': r[1],  # Item ID
+                'C': r[2],  # Title
+                'D': r[3],  # Notes
+                'E': r[4],  # Duration
+                'F': r[5],  # Description
+                'G': r[6],  # Order
+                'H': r[7] if len(r) > 7 else ''  # Tuning
+            }
+            for r in items_data
+        }
 
         # Combine routine items with their details
         items_with_details = []
         for routine_item in routine_items:
             item_id = routine_item['B']  # Item ID from routine's column B
             item_details = items_by_id.get(item_id, {})
-            
-            # Only include 'TRUE' for completed items, leave others empty
-            if routine_item.get('D') != 'TRUE':
-                routine_item['D'] = ''
-                
             items_with_details.append({
                 "routineEntry": routine_item,
                 "itemDetails": item_details
@@ -221,44 +246,43 @@ def update_routine_order_route(routine_id):
         app.logger.error(f"Error updating routine order: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>/items/<item_id>', methods=['PUT', 'DELETE'])
-def routine_item_operations(routine_name, item_id):
-    """Handle operations on items within a routine"""
-    if request.method == 'DELETE':
-        if remove_from_routine(routine_name, item_id):
-            return '', 204
-        return jsonify({"error": "Failed to remove item from routine"}), 400
-    elif request.method == 'PUT':
-        item = request.json
-        result = update_routine_item(routine_name, item_id, item)
-        if result:
-            return jsonify(result)
-        return jsonify({"error": "Failed to update routine item"}), 400
+@app.route('/api/routines/<int:routine_id>/items/<item_id>', methods=['PUT', 'DELETE'])
+def routine_item(routine_id, item_id):
+    """Handle updates and deletions of routine items"""
+    try:
+        if request.method == 'DELETE':
+            success = remove_from_routine(routine_id, item_id)
+            if success:
+                return jsonify({"success": True})
+            return jsonify({"error": "Failed to remove item"}), 500
+        elif request.method == 'PUT':
+            if not request.is_json:
+                return jsonify({"error": "Request must be JSON"}), 400
+                
+            item = request.json
+            result = update_routine_item(routine_id, item_id, item)
+            if result:
+                return jsonify(result)
+            return jsonify({"error": "Failed to update item"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/routines/<routine_name>/items', methods=['POST'])
-def add_item_to_routine(routine_name):
+@app.route('/api/routines/<int:routine_id>/items', methods=['POST'])
+def add_routine_item(routine_id):
     """Add an item to a routine"""
     try:
         if not request.is_json:
             return jsonify({"error": "Request must be JSON"}), 400
             
         item_id = request.json.get('itemId')
-        notes = request.json.get('notes', '')
-        
-        if item_id is None:
+        if not item_id:
             return jsonify({"error": "Item ID is required"}), 400
             
-        app.logger.debug(f"Adding item {item_id} to routine {routine_name}")
-        result = add_to_routine(routine_name, item_id, notes)
-        
+        result = add_to_routine(routine_id, item_id)
         if result:
-            return jsonify(result)
-        return jsonify({"error": "Failed to add item to routine"}), 500
-    except ValueError as ve:
-        app.logger.error(f"ValueError in add_item_to_routine: {str(ve)}")
-        return jsonify({"error": str(ve)}), 400
+            return jsonify(result), 201
+        return jsonify({"error": "Failed to add item"}), 500
     except Exception as e:
-        app.logger.error(f"Error in add_item_to_routine: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # OAuth and testing routes

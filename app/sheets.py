@@ -227,14 +227,13 @@ def create_routine(routine_name):
     """Create a new routine with proper sheet initialization and tracking."""
     try:
         spread = get_spread()
-        routine_name = routine_name.lower()  # Convert to lowercase for consistency
         
         # Get current routines to check for duplicates and get next ID
         routines_sheet = spread.worksheet('Routines')
         current_routines = get_all_routine_records()
         
         # Check for duplicate names (case insensitive)
-        if any(r['B'].lower() == routine_name for r in current_routines):  # Column B for name
+        if any(r['B'].lower() == routine_name.lower() for r in current_routines):  # Column B for name
             raise ValueError(f"Routine '{routine_name}' already exists")
             
         # Generate new ID
@@ -243,26 +242,34 @@ def create_routine(routine_name):
         # Generate new order
         new_order = max([int(float(r['D'])) for r in current_routines], default=-1) + 1  # Column D for order
         
-        # Create new worksheet
-        worksheet = spread.add_worksheet(routine_name, rows=1000, cols=20)
+        # Create new worksheet using ID as the sheet name
+        worksheet = spread.add_worksheet(str(new_id), rows=1000, cols=20)
+        
+        # Add header row
+        header_row = ['ID', 'Item ID', 'order', 'completed']
+        worksheet.update('A1:D1', [header_row])
         
         # Ensure completed column exists
         ensure_completed_column(worksheet)
         
+        # Format timestamp in desired format
+        now = datetime.now()
+        timestamp = now.strftime('%Y-%m-%d %I:%M%p PST')
+        
         # Add entry to Routines index
         new_routine = [
-            str(new_id),                # Column A: ID
-            routine_name,               # Column B: name
-            datetime.now().isoformat(), # Column C: created
-            str(new_order)             # Column D: order
+            str(new_id),    # Column A: ID
+            routine_name,    # Column B: name
+            timestamp,       # Column C: created
+            str(new_order)  # Column D: order
         ]
-        routines_sheet.append_row(new_routine)
+        routines_sheet.append_row(new_routine, value_input_option='USER_ENTERED')
         
         invalidate_caches()
         return {
             'ID': new_id,
             'name': routine_name,
-            'created': new_routine[2],
+            'created': timestamp,
             'order': new_order
         }
         
@@ -450,25 +457,17 @@ def update_items_order(items):
         logging.error(f"Error in update_items_order: {str(e)}")
         return []
 
-def get_routine(routine_name):
+def get_routine(routine_id):
     """Get a specific routine's items."""
     spread = get_spread()
     
-    # Get all worksheet names
-    all_worksheets = spread.worksheets()
-    
-    # Find the worksheet with a case-insensitive match
-    worksheet = None
-    for ws in all_worksheets:
-        if ws.title.lower() == routine_name.lower():
-            worksheet = ws
-            break
-            
-    if not worksheet:
-        raise ValueError(f"Routine '{routine_name}' not found")
-        
-    records = sheet_to_records(worksheet, is_routine_worksheet=True)
-    return records
+    try:
+        # Get the worksheet directly using the ID as the sheet name
+        worksheet = spread.worksheet(str(routine_id))
+        records = sheet_to_records(worksheet, is_routine_worksheet=True)
+        return records
+    except Exception as e:
+        raise ValueError(f"Routine with ID {routine_id} not found")
 
 def get_active_routine():
     """Get the currently active routine ID."""
@@ -581,48 +580,44 @@ def test_sheets_connection():
             "error": str(e)
         }
 
-def add_to_routine(routine_name, item_id, notes=""):
+def add_to_routine(routine_id, item_id, notes=""):
     """Add an item to a routine."""
     try:
         spread = get_spread()
-        worksheet = spread.worksheet(routine_name)
-        records = sheet_to_records(worksheet, is_routine_worksheet=True)
+        worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         
-        # Generate new ID for routine item - use column A
-        new_id = max([int(float(r.get('A', 0))) for r in records], default=0) + 1
+        # Get only the ID and order columns to minimize data transfer
+        id_col = worksheet.col_values(1)[1:]  # Skip header row
+        order_col = worksheet.col_values(3)[1:]  # Skip header row
         
-        # Set order to end of list - use column C
-        max_order = max([int(float(r.get('C', 0))) for r in records], default=-1)
+        # Generate new ID and order
+        new_id = max([int(float(id_)) for id_ in id_col if id_], default=0) + 1
+        max_order = max([int(float(order)) for order in order_col if order], default=-1)
         
-        # Create new record using column letters
-        new_record = {
+        # Append just the new row directly
+        new_row = [str(new_id), str(item_id), str(max_order + 1), 'FALSE']
+        worksheet.append_row(new_row, value_input_option='USER_ENTERED')
+        
+        invalidate_caches()
+        return {
             'A': str(new_id),           # ID (routine entry ID)
             'B': str(item_id),          # Item ID (reference to Items sheet)
             'C': str(max_order + 1),    # Order
             'D': 'FALSE'                # Completed
         }
-        
-        # Add new record and save
-        records.append(new_record)
-        success = records_to_sheet(worksheet, records, is_routine_worksheet=True)
-        
-        if success:
-            invalidate_caches()
-            return new_record
             
-        return None
     except Exception as e:
         logging.error(f"Error in add_to_routine: {str(e)}")
         raise ValueError(f"Failed to add to routine: {str(e)}")
 
-def update_routine_order(routine_name, items):
+def update_routine_order(routine_id, items):
     """Update routine items with their new order."""
     try:
         spread = get_spread()
-        logging.debug(f"Starting routine order update for {routine_name}...")
+        logging.debug(f"Starting routine order update for {routine_id}...")
         logging.debug(f"Received items for reordering: {items}")
         
-        worksheet = spread.worksheet(routine_name)
+        worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         
         # Get existing items to ensure we have all data
         existing_items = sheet_to_records(worksheet, is_routine_worksheet=True)
@@ -666,8 +661,8 @@ def delete_routine(routine_id):
         if not routine:
             raise ValueError(f"Routine with ID {routine_id} not found")
             
-        # Delete the worksheet
-        worksheet = spread.worksheet(routine['B'])  # Column B for name
+        # Delete the worksheet using ID as sheet name
+        worksheet = spread.worksheet(str(routine_id))
         spread.del_worksheet(worksheet)
         
         # Remove from Routines index
@@ -693,11 +688,11 @@ def delete_routine(routine_id):
         logging.error(f"Error in delete_routine: {str(e)}")
         return False
 
-def update_routine_item(routine_name, item_id, item):
+def update_routine_item(routine_id, item_id, item):
     """Update a single item in a routine (e.g., to update notes)."""
     try:
         spread = get_spread()
-        worksheet = spread.worksheet(routine_name)
+        worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         records = sheet_to_records(worksheet, is_routine_worksheet=True)
         
         # Find and update the item
@@ -714,7 +709,7 @@ def update_routine_item(routine_name, item_id, item):
                 break
                 
         if not updated:
-            raise ValueError(f"Item {item_id} not found in routine {routine_name}")
+            raise ValueError(f"Item {item_id} not found in routine {routine_id}")
             
         # Write back to sheet
         success = records_to_sheet(worksheet, records, is_routine_worksheet=True)
@@ -727,12 +722,12 @@ def update_routine_item(routine_name, item_id, item):
         logging.error(f"Error in update_routine_item: {str(e)}")
         raise ValueError(f"Failed to update routine item: {str(e)}")
 
-def remove_from_routine(routine_name, routine_entry_id):
+def remove_from_routine(routine_id, routine_entry_id):
     """Remove an item from a routine using its routine entry ID (column A)."""
     try:
-        logging.debug(f"Starting remove_from_routine for routine: {routine_name}, routine_entry_id: {routine_entry_id}")
+        logging.debug(f"Starting remove_from_routine for routine: {routine_id}, routine_entry_id: {routine_entry_id}")
         spread = get_spread()
-        worksheet = spread.worksheet(routine_name)
+        worksheet = spread.worksheet(str(routine_id))  # Use ID as sheet name
         records = sheet_to_records(worksheet, is_routine_worksheet=True)
         logging.debug(f"Initial records: {records}")
         

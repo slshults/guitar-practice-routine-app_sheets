@@ -43,9 +43,9 @@ export const useRoutines = () => {
   };
 
   // Delete routine
-  const deleteRoutine = async (routineName) => {
+  const deleteRoutine = async (routineId) => {
     try {
-      const response = await fetch(`/api/routines/${routineName}`, {
+      const response = await fetch(`/api/routines/${routineId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete routine');

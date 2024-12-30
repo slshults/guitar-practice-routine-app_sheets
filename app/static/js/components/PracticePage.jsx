@@ -73,8 +73,36 @@ export const PracticePage = () => {
 
   // Create audio context for timer completion sound
   const audioContext = useRef(null);
-  const oscillator = useRef(null);
+  const gainNode = useRef(null);
   const timerSound = useRef(null);
+  const audioBuffer = useRef(null);
+
+  // Initialize Web Audio API context and nodes
+  useEffect(() => {
+    audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Create gain node
+    gainNode.current = audioContext.current.createGain();
+    gainNode.current.gain.value = 3.0;  // Competing with electric guitar! 🎸
+
+    // Connect nodes
+    gainNode.current.connect(audioContext.current.destination);
+
+    // Load and decode audio file
+    fetch('/static/sound/timesUp.mp3')
+      .then(response => response.arrayBuffer())
+      .then(arrayBuffer => audioContext.current.decodeAudioData(arrayBuffer))
+      .then(decodedBuffer => {
+        audioBuffer.current = decodedBuffer;
+      })
+      .catch(e => console.error('Error loading sound:', e));
+
+    return () => {
+      if (audioContext.current) {
+        audioContext.current.close();
+      }
+    };
+  }, []);
 
   // Timer countdown effect
   useEffect(() => {
@@ -92,13 +120,16 @@ export const PracticePage = () => {
             if (next[itemId] === 0) {
               // Stop any currently playing sound
               if (timerSound.current) {
-                timerSound.current.pause();
-                timerSound.current.currentTime = 0;
+                timerSound.current.stop();
               }
               
-              // Create and play new sound
-              timerSound.current = new Audio('/static/sound/timesUp.mp3');
-              timerSound.current.play().catch(e => console.error('Error playing sound:', e));
+              // Create and play new sound using Web Audio API
+              if (audioBuffer.current && audioContext.current) {
+                timerSound.current = audioContext.current.createBufferSource();
+                timerSound.current.buffer = audioBuffer.current;
+                timerSound.current.connect(gainNode.current);
+                timerSound.current.start();
+              }
             }
           }
         });
@@ -111,7 +142,7 @@ export const PracticePage = () => {
       clearInterval(interval);
       // Clean up audio if it's playing
       if (timerSound.current) {
-        timerSound.current.pause();
+        timerSound.current.stop();
         timerSound.current = null;
       }
     };
@@ -180,9 +211,7 @@ export const PracticePage = () => {
     if (routineItem) {
       // Stop any playing sound when timer controls are used
       if (timerSound.current) {
-        timerSound.current.pause();
-        timerSound.current.currentTime = 0;
-        timerSound.current = null;
+        timerSound.current.stop();
       }
 
       // Only initialize timer if it doesn't exist
@@ -249,9 +278,7 @@ export const PracticePage = () => {
     e?.stopPropagation();
     // Stop any playing sound when timer is reset
     if (timerSound.current) {
-      timerSound.current.pause();
-      timerSound.current.currentTime = 0;
-      timerSound.current = null;
+      timerSound.current.stop();
     }
 
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
