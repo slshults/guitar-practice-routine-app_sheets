@@ -125,62 +125,40 @@ def sheet_to_records(worksheet, is_routine_worksheet=True):
         raise
 
 def records_to_sheet(worksheet, records, is_routine_worksheet=True):
-    """Convert list of dictionaries back to sheet format.
-    This function is header-row agnostic - it uses column letters (A, B, C...) 
-    to read and write data, ignoring whatever content might be in row 1.
-    """
-    try:
-        if not records:
-            # Clear everything except header row
-            last_col = chr(ord('A') + (ROUTINE_COLUMNS if is_routine_worksheet else ITEMS_COLUMNS) - 1)
-            clear_range = f'A2:{last_col}'
-            logging.debug(f"Clearing empty sheet range: {clear_range}")
-            worksheet.batch_clear([clear_range])
-            return True
-            
-        # Get number of columns based on sheet type
-        num_columns = ROUTINE_COLUMNS if is_routine_worksheet else ITEMS_COLUMNS
-        logging.debug(f"Using {'routine' if is_routine_worksheet else 'items'} structure with {num_columns} columns")
-            
-        # Create the data rows
-        data_rows = []
-        for record in records:
-            row = []
-            logging.debug(f"Processing record: {record}")
-            for idx in range(num_columns):
-                # Get value using column letter
-                col_letter = chr(ord('A') + idx)
-                value = record.get(col_letter, '')
-                # If the value is empty or just whitespace, keep it as an empty string
-                value = str(value).strip() if value else ''
-                row.append(value)
-            data_rows.append(row)
-            
-        # Get the range for data rows (A2:X{last_row}) - explicitly start at row 2
-        last_col = chr(ord('A') + num_columns - 1)
-        last_row = len(data_rows) + 1  # +1 because we start at row 2
-        range_str = f'A2:{last_col}{last_row}'
-        
-        logging.debug(f"Writing to range: {range_str}")
-        logging.debug(f"Data rows to write: {data_rows}")
-        
-        # Clear everything after row 1 up to the last column
-        clear_range = f'A2:{last_col}'
-        logging.debug(f"Clearing sheet range before write: {clear_range}")
-        worksheet.batch_clear([clear_range])
-        
-        # Update with new data if we have any, starting at row 2
-        if data_rows:
-            logging.debug(f"Updating sheet range: {range_str} with {len(data_rows)} rows")
-            worksheet.update(range_str, data_rows, value_input_option='USER_ENTERED')
-            logging.debug("Sheet update completed")
-        
-        logging.debug(f"Updated sheet with {len(records)} records")
-        
+    """Write records back to sheet, handling all columns at once"""
+    if not records:
         return True
-    except Exception as e:
-        logging.error(f"Error in records_to_sheet: {str(e)}")
-        raise
+        
+    # Determine range based on worksheet type
+    num_cols = 4 if is_routine_worksheet else 8
+    col_end = 'D' if is_routine_worksheet else 'H'
+    
+    # Convert records to rows, preserving all columns
+    rows = []
+    for record in records:
+        logging.debug(f"Processing record: {record}")
+        row = []
+        for col in 'ABCDEFGH'[:num_cols]:  # Only process columns we need
+            row.append(record.get(col, ''))
+        rows.append(row)
+    
+    # Calculate range
+    range_start = f'A2'
+    range_end = f'{col_end}{len(rows) + 1}'  # +1 because we start at row 2
+    range_str = f'{range_start}:{range_end}'
+    logging.debug(f"Writing to range: {range_str}")
+    logging.debug(f"Data rows to write: {rows}")
+    
+    # Clear the range first
+    worksheet.batch_clear([f'A2:{col_end}'])
+    logging.debug(f"Clearing sheet range before write: A2:{col_end}")
+    
+    # Write all data at once
+    worksheet.update(range_str, rows, value_input_option='USER_ENTERED')
+    logging.debug(f"Sheet update completed")
+    logging.debug(f"Updated sheet with {len(rows)} records")
+    
+    return True
 
 def ensure_completed_column(worksheet):
     """Ensure the worksheet has a completed column in column D"""

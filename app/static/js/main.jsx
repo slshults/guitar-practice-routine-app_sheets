@@ -7,6 +7,7 @@ import { PracticeItemsList } from '@components/PracticeItemsList';
 import { PracticePage } from '@components/PracticePage';
 import NavMenu from '@components/NavMenu';
 import RoutinesPage from '@components/RoutinesPage';
+import ImportsPage from '@components/ImportsPage';
 
 const PageContent = () => {
   const { activePage } = useNavigation();
@@ -18,6 +19,8 @@ const PageContent = () => {
       return <RoutinesPage />;
     case 'Items':
       return <PracticeItemsList />;
+    case 'Imports':
+      return <ImportsPage />;
     default:
       return <div>Page not implemented yet</div>;
   }

@@ -13,6 +13,8 @@ from google_auth_oauthlib.flow import Flow
 import os
 import logging
 import time  # Add at the top with other imports
+import math
+from typing import List, Dict
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -611,3 +613,123 @@ def get_active_routine_with_details():
     except Exception as e:
         app.logger.error(f"Error getting active routine with details: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+def batch_items(items: List[Dict], batch_size: int = 5) -> List[List[Dict]]:
+    """Split items into batches of 5"""
+    return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+
+def exponential_backoff(attempt: int) -> None:
+    """Wait with exponential backoff, starting with a longer base delay"""
+    base_delay = 5  # Start with 5 seconds
+    delay = min(base_delay * math.pow(2, attempt), 30)  # Cap at 30 seconds
+    time.sleep(delay)
+
+@app.route('/api/items/bulk', methods=['POST'])
+def bulk_import_items():
+    """Handle bulk import of items with conservative rate limiting"""
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    items = request.json
+    if not isinstance(items, list):
+        return jsonify({"error": "Request body must be an array"}), 400
+
+    try:
+        # Validate all items first
+        for item in items:
+            if not isinstance(item, dict):
+                return jsonify({"error": "Each item must be an object"}), 400
+            if 'title' not in item or 'duration' not in item:
+                return jsonify({"error": "Each item must have title and duration"}), 400
+
+        # Get current items once at the start
+        spread = get_spread()
+        items_sheet = spread.worksheet('Items')
+        current_records = sheet_to_records(items_sheet, is_routine_worksheet=False)
+        
+        # Get the next available ID and order
+        next_id = str(max([int(r['A']) for r in current_records], default=0) + 1)
+        next_order = str(max([int(r['G']) for r in current_records], default=0) + 1)
+        
+        # Process all items first, accumulating them in memory
+        imported_items = []
+        for item in items:
+            new_item = {
+                'A': next_id,
+                'B': next_id,
+                'C': item['title'],
+                'D': '',
+                'E': item['duration'],
+                'F': '',
+                'G': next_order,
+                'H': ''
+            }
+            current_records.append(new_item)
+            imported_items.append(new_item)
+            next_id = str(int(next_id) + 1)
+            next_order = str(int(next_order) + 1)
+
+        # Write all records in one batch with exponential backoff
+        max_attempts = 5
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                records_to_sheet(items_sheet, current_records)
+                break
+            except Exception as e:
+                app.logger.error(f"Error in batch write, attempt {attempt}: {str(e)}")
+                if "quota" in str(e).lower() and attempt < max_attempts - 1:
+                    exponential_backoff(attempt)
+                    attempt += 1
+                else:
+                    raise
+
+        return jsonify({
+            "success": True,
+            "imported": len(imported_items),
+            "items": imported_items
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error in bulk import: {str(e)}")
+        return jsonify({
+            "error": str(e),
+            "imported": len(imported_items),
+            "items": imported_items
+        }), 500
+
+def records_to_sheet(worksheet, records, is_routine_worksheet=False):
+    """Write records back to sheet, handling all columns at once"""
+    if not records:
+        return True
+        
+    # Determine range based on worksheet type
+    num_cols = 4 if is_routine_worksheet else 8
+    col_end = 'D' if is_routine_worksheet else 'H'
+    
+    # Convert records to rows, preserving all columns
+    rows = []
+    for record in records:
+        app.logger.debug(f"Processing record: {record}")
+        row = []
+        for col in 'ABCDEFGH'[:num_cols]:  # Only process columns we need
+            row.append(record.get(col, ''))
+        rows.append(row)
+    
+    # Calculate range
+    range_start = f'A2'
+    range_end = f'{col_end}{len(rows) + 1}'  # +1 because we start at row 2
+    range_str = f'{range_start}:{range_end}'
+    app.logger.debug(f"Writing to range: {range_str}")
+    app.logger.debug(f"Data rows to write: {rows}")
+    
+    # Clear the range first
+    worksheet.batch_clear([f'A2:{col_end}'])
+    app.logger.debug(f"Clearing sheet range before write: A2:{col_end}")
+    
+    # Write all data at once
+    worksheet.update(range_str, rows, value_input_option='USER_ENTERED')
+    app.logger.debug(f"Sheet update completed")
+    app.logger.debug(f"Updated sheet with {len(rows)} records")
+    
+    return True
