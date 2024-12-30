@@ -627,7 +627,7 @@ def exponential_backoff(attempt: int) -> None:
 
 @app.route('/api/items/bulk', methods=['POST'])
 def bulk_import_items():
-    """Handle bulk import of items with conservative rate limiting"""
+    """Handle bulk import of items by appending them to the Items sheet"""
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"}), 400
 
@@ -636,67 +636,42 @@ def bulk_import_items():
         return jsonify({"error": "Request body must be an array"}), 400
 
     try:
-        # Validate all items first
-        for item in items:
-            if not isinstance(item, dict):
-                return jsonify({"error": "Each item must be an object"}), 400
-            if 'title' not in item or 'duration' not in item:
-                return jsonify({"error": "Each item must have title and duration"}), 400
-
-        # Get current items once at the start
+        # Get the Items sheet
         spread = get_spread()
         items_sheet = spread.worksheet('Items')
-        current_records = sheet_to_records(items_sheet, is_routine_worksheet=False)
         
-        # Get the next available ID and order
-        next_id = str(max([int(r['A']) for r in current_records], default=0) + 1)
-        next_order = str(max([int(r['G']) for r in current_records], default=0) + 1)
+        # Find first empty row (row 1 is header)
+        first_empty_row = len(items_sheet.col_values(1)) + 1
+        next_id = first_empty_row - 1  # Row number minus header row
         
-        # Process all items first, accumulating them in memory
-        imported_items = []
-        for item in items:
-            new_item = {
-                'A': next_id,
-                'B': next_id,
-                'C': item['title'],
-                'D': '',
-                'E': item['duration'],
-                'F': '',
-                'G': next_order,
-                'H': ''
-            }
-            current_records.append(new_item)
-            imported_items.append(new_item)
-            next_id = str(int(next_id) + 1)
-            next_order = str(int(next_order) + 1)
-
-        # Write all records in one batch with exponential backoff
-        max_attempts = 5
-        attempt = 0
-        while attempt < max_attempts:
-            try:
-                records_to_sheet(items_sheet, current_records)
-                break
-            except Exception as e:
-                app.logger.error(f"Error in batch write, attempt {attempt}: {str(e)}")
-                if "quota" in str(e).lower() and attempt < max_attempts - 1:
-                    exponential_backoff(attempt)
-                    attempt += 1
-                else:
-                    raise
-
+        # Convert items to rows
+        rows = []
+        for idx, item in enumerate(items):
+            row_id = str(next_id + idx)
+            rows.append([
+                row_id,              # A: ID
+                row_id,              # B: Item ID
+                item['title'],       # C: Title
+                '',                  # D: Notes
+                item['duration'],    # E: Duration
+                '',                  # F: Description
+                row_id,              # G: Order
+                ''                   # H: Tuning
+            ])
+        
+        if rows:
+            # Append the rows
+            items_sheet.append_rows(rows, value_input_option='USER_ENTERED')
+        
         return jsonify({
             "success": True,
-            "imported": len(imported_items),
-            "items": imported_items
+            "imported": len(rows)
         })
 
     except Exception as e:
         app.logger.error(f"Error in bulk import: {str(e)}")
         return jsonify({
-            "error": str(e),
-            "imported": len(imported_items),
-            "items": imported_items
+            "error": str(e)
         }), 500
 
 def records_to_sheet(worksheet, records, is_routine_worksheet=False):
@@ -815,3 +790,90 @@ def bulk_import_routines():
             "imported": len(imported_routines) if 'imported_routines' in locals() else 0,
             "routines": imported_routines if 'imported_routines' in locals() else []
         }), 500
+
+@app.route('/api/routines/<int:routine_id>/items/bulk', methods=['POST'])
+def bulk_import_routine_items(routine_id):
+    """Import multiple items into a routine by matching titles."""
+    try:
+        app.logger.debug(f"Received bulk import request for routine {routine_id}")
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        items_to_import = request.json
+        app.logger.debug(f"Items to import: {items_to_import}")
+
+        # Get all existing items to match against
+        all_items = get_all_items()
+        items_by_title = {item['C'].lower(): item for item in all_items}  # Case-insensitive lookup
+
+        # Get the worksheet for this routine
+        spread = get_spread()
+        worksheet = spread.worksheet(str(routine_id))
+        existing_routine_items = sheet_to_records(worksheet, is_routine_worksheet=True)
+        
+        # Track which items are already in the routine
+        existing_item_ids = {item['B'] for item in existing_routine_items}  # Set of item IDs
+        
+        # Get next available ID for column A
+        next_id = 1
+        if existing_routine_items:
+            next_id = max(int(item['A']) for item in existing_routine_items if item['A'].isdigit()) + 1
+        
+        # Process each item to import
+        items_to_add = []
+        not_found_titles = []
+        
+        for idx, item in enumerate(items_to_import):
+            title = item.get('title', '')
+            if not title:
+                continue
+            
+            # Look for exact match first (case-insensitive)
+            matching_item = items_by_title.get(title.lower())
+            
+            if matching_item:
+                # Only add if not already in routine
+                if matching_item['B'] not in existing_item_ids:
+                    items_to_add.append({
+                        'A': str(next_id + idx),  # Simple incrementing ID
+                        'B': matching_item['B'],  # Item ID from Items sheet
+                        'C': str(idx),  # Order based on position in import list
+                        'D': ''  # Empty string for completed column
+                    })
+            else:
+                # Item not found - add to not_found list
+                not_found_titles.append(title)
+                # Still add to routine but without an Item ID
+                items_to_add.append({
+                    'A': str(next_id + idx),  # Simple incrementing ID
+                    'B': '',  # No Item ID yet
+                    'C': str(idx),  # Order based on position in import list
+                    'D': ''  # Empty string for completed column
+                })
+
+        if not items_to_add:
+            return jsonify({
+                "error": "No items were processed",
+                "not_found": not_found_titles
+            }), 400
+
+        # Add all new items to the worksheet
+        all_items = existing_routine_items + items_to_add
+        success = records_to_sheet(worksheet, all_items, is_routine_worksheet=True)
+
+        response_data = {
+            "imported": len(items_to_add),
+            "not_found": not_found_titles
+        }
+
+        if not_found_titles:
+            response_data["message"] = f"These items were not found, you'll need to create them, and add the Item IDs to the routine sheet: {', '.join(not_found_titles)}"
+
+        if success:
+            return jsonify(response_data)
+        else:
+            return jsonify({"error": "Failed to import items"}), 500
+
+    except Exception as e:
+        app.logger.error(f"Error importing routine items: {str(e)}")
+        return jsonify({"error": str(e)}), 500
