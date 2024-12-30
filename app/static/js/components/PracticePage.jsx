@@ -71,14 +71,56 @@ export const PracticePage = () => {
 
   const [completedItems, setCompletedItems] = useState(new Set());
 
+  // Create audio context for timer completion sound
+  const audioContext = useRef(null);
+  const oscillator = useRef(null);
+  const timerSound = useRef(null);
+
+  // Timer countdown effect
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimers(prev => {
+        const next = { ...prev };
+        let changed = false;
+        activeTimers.forEach(itemId => {
+          if (next[itemId] > 0) {
+            next[itemId] = next[itemId] - 1;
+            changed = true;
+            console.log(`Timer ${itemId} ticked down to ${next[itemId]}`);
+            
+            // Play sound when timer hits zero
+            if (next[itemId] === 0) {
+              // Stop any currently playing sound
+              if (timerSound.current) {
+                timerSound.current.pause();
+                timerSound.current.currentTime = 0;
+              }
+              
+              // Create and play new sound
+              timerSound.current = new Audio('/static/sound/timesUp.mp3');
+              timerSound.current.play().catch(e => console.error('Error playing sound:', e));
+            }
+          }
+        });
+        return changed ? next : prev;
+      });
+    }, 1000);
+
+    console.log('Timer effect: Active timers:', Array.from(activeTimers));
+    return () => {
+      clearInterval(interval);
+      // Clean up audio if it's playing
+      if (timerSound.current) {
+        timerSound.current.pause();
+        timerSound.current = null;
+      }
+    };
+  }, [activeTimers]);
+
   // Effect to sync completedItems with completedItemIds when routine changes
   useEffect(() => {
     setCompletedItems(completedItemIds);
   }, [completedItemIds]);
-
-  // Create audio context for timer completion sound
-  const audioContext = useRef(null);
-  const oscillator = useRef(null);
 
   // Fetch notes for an item
   const fetchNotes = useCallback(async (itemId) => {
@@ -99,6 +141,7 @@ export const PracticePage = () => {
 
   // Initialize timer for an item
   const initTimer = useCallback((itemId, duration) => {
+    console.log(`Initializing timer for item ${itemId} with duration ${duration} minutes`);
     setTimers(prev => {
       if (!prev[itemId]) {
         return {
@@ -135,13 +178,28 @@ export const PracticePage = () => {
     e?.stopPropagation(); // Prevent expand/collapse when clicking timer
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
     if (routineItem) {
-      initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
+      // Stop any playing sound when timer controls are used
+      if (timerSound.current) {
+        timerSound.current.pause();
+        timerSound.current.currentTime = 0;
+        timerSound.current = null;
+      }
+
+      // Only initialize timer if it doesn't exist
+      if (!timers[itemId]) {
+        console.log(`Timer ${itemId} not found, initializing...`);
+        initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
+      } else {
+        console.log(`Timer ${itemId} exists with value ${timers[itemId]}`);
+      }
       
       setActiveTimers(prev => {
         const next = new Set(prev);
         if (next.has(itemId)) {
+          console.log(`Deactivating timer ${itemId}`);
           next.delete(itemId);
         } else {
+          console.log(`Activating timer ${itemId}`);
           next.add(itemId);
         }
         return next;
@@ -189,6 +247,13 @@ export const PracticePage = () => {
 
   const resetTimer = (itemId, e) => {
     e?.stopPropagation();
+    // Stop any playing sound when timer is reset
+    if (timerSound.current) {
+      timerSound.current.pause();
+      timerSound.current.currentTime = 0;
+      timerSound.current = null;
+    }
+
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
     if (routineItem) {
       const duration = routineItem.details?.['E'] || 5;  // Column E is Duration
