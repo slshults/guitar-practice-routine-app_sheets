@@ -15,6 +15,7 @@ import logging
 import time  # Add at the top with other imports
 import math
 from typing import List, Dict
+from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -733,3 +734,84 @@ def records_to_sheet(worksheet, records, is_routine_worksheet=False):
     app.logger.debug(f"Updated sheet with {len(rows)} records")
     
     return True
+
+@app.route('/api/routines/bulk', methods=['POST'])
+def bulk_import_routines():
+    """Handle bulk import of routine definitions (Phase 1)"""
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    routines = request.json
+    if not isinstance(routines, list):
+        return jsonify({"error": "Request body must be an array"}), 400
+
+    try:
+        # Validate all routines first
+        for routine in routines:
+            if not isinstance(routine, dict):
+                return jsonify({"error": "Each routine must be an object"}), 400
+            if 'name' not in routine:
+                return jsonify({"error": "Each routine must have a name"}), 400
+
+        # Get current routines once at the start
+        spread = get_spread()
+        routines_sheet = spread.worksheet('Routines')
+        current_records = sheet_to_records(routines_sheet, is_routine_worksheet=True)
+        
+        # Get the next available ID and order
+        next_id = str(max([int(r['A']) for r in current_records], default=0) + 1)
+        next_order = str(max([int(r['D']) for r in current_records], default=0) + 1)
+        
+        # Generate timestamp in our format
+        now = datetime.now()
+        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Process all routines first, accumulating them in memory
+        imported_routines = []
+        for routine in routines:
+            new_routine = {
+                'A': next_id,      # ID
+                'B': routine['name'],  # Name
+                'C': timestamp,    # Created
+                'D': next_order    # Order
+            }
+            current_records.append(new_routine)
+            imported_routines.append(new_routine)
+            
+            # Create the routine's worksheet using ID as name
+            worksheet = spread.add_worksheet(str(next_id), rows=1000, cols=20)
+            # Add header row
+            header_row = ['ID', 'Item ID', 'order', 'completed']
+            worksheet.update('A1:D1', [header_row])
+            
+            next_id = str(int(next_id) + 1)
+            next_order = str(int(next_order) + 1)
+
+        # Write all records in one batch with exponential backoff
+        max_attempts = 5
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                records_to_sheet(routines_sheet, current_records, is_routine_worksheet=True)
+                break
+            except Exception as e:
+                app.logger.error(f"Error in batch write, attempt {attempt}: {str(e)}")
+                if "quota" in str(e).lower() and attempt < max_attempts - 1:
+                    exponential_backoff(attempt)
+                    attempt += 1
+                else:
+                    raise
+
+        return jsonify({
+            "success": True,
+            "imported": len(imported_routines),
+            "routines": imported_routines
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error in bulk routine import: {str(e)}")
+        return jsonify({
+            "error": str(e),
+            "imported": len(imported_routines) if 'imported_routines' in locals() else 0,
+            "routines": imported_routines if 'imported_routines' in locals() else []
+        }), 500
