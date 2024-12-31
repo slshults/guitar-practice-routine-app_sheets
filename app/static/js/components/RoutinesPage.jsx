@@ -70,6 +70,67 @@ const SortableItem = React.memo(({ item, itemDetails }) => {
   );
 });
 
+// Add SortableInactiveRoutine component near the top with other components
+const SortableInactiveRoutine = React.memo(({ routine, handleActivateRoutine, handleEditClick, handleDeleteClick }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: routine.ID });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 1 : 0,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center justify-between p-3 ${
+        isDragging ? 'bg-gray-700' : 'bg-gray-800'
+      } rounded-lg`}
+    >
+      <div className="flex items-center">
+        <div {...attributes} {...listeners}>
+          <GripVertical className="h-5 w-5 text-gray-500 mr-4 cursor-move" />
+        </div>
+        <span>{routine.name}</span>
+      </div>
+      <div className="flex space-x-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleActivateRoutine(routine.ID)}
+          className="text-green-500 hover:text-green-400"
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleEditClick(routine)}
+          className="text-blue-500 hover:text-blue-400"
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="text-red-500 hover:text-red-400"
+          onClick={() => handleDeleteClick(routine.ID)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+});
+
 const RoutinesPage = () => {
   const { isAuthenticated, checking, handleLogout } = useAuth();
   const [newRoutineName, setNewRoutineName] = useState('');
@@ -83,7 +144,11 @@ const RoutinesPage = () => {
   const [isDragging, setIsDragging] = useState(false);
 
   const activeRoutine = useMemo(() => routines.find(r => r.active), [routines]);
-  const inactiveRoutines = useMemo(() => routines.filter(r => !r.active), [routines]);
+  const inactiveRoutines = useMemo(() => 
+    routines
+      .filter(r => !r.active)
+      .sort((a, b) => Number(a.order) - Number(b.order)), 
+    [routines]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -304,6 +369,57 @@ const RoutinesPage = () => {
     }
   };
 
+  const handleDragEndInactive = async ({ active, over }) => {
+    if (!active || !over || active.id === over.id) return;
+
+    const oldIndex = inactiveRoutines.findIndex(routine => routine.ID === active.id);
+    const newIndex = inactiveRoutines.findIndex(routine => routine.ID === over.id);
+
+    try {
+      // Create new array with moved item
+      const reordered = arrayMove(inactiveRoutines, oldIndex, newIndex);
+      
+      // Just swap the order values between the moved items
+      const updates = [
+        {
+          'A': reordered[newIndex].ID,
+          'D': inactiveRoutines[newIndex].order
+        },
+        {
+          'A': inactiveRoutines[newIndex].ID,
+          'D': reordered[newIndex].order
+        }
+      ];
+      
+      // Update UI optimistically
+      setRoutines(prevRoutines => {
+        return prevRoutines.map(routine => {
+          const update = updates.find(u => u.A === routine.ID);
+          if (update) {
+            return { ...routine, order: update.D };
+          }
+          return routine;
+        });
+      });
+      
+      // Send update to backend
+      const orderResponse = await fetch('/api/routines/order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      
+      if (!orderResponse.ok) throw new Error('Failed to update routine order');
+      
+      // Refresh routines to ensure sync
+      await fetchRoutines();
+    } catch (error) {
+      console.error('Reorder failed:', error);
+      // Revert to original order on error
+      await fetchRoutines();
+    }
+  };
+
   useEffect(() => {
     if (!checking) {
       setLoading(true);
@@ -422,61 +538,48 @@ const RoutinesPage = () => {
           <CardContent>
             {isAuthenticated ? (
               <>
-                {/* New Routine Creation Form */}
-                <div className="mb-4 flex space-x-2">
-                  <Input
-                    placeholder="New Routine Name"
-                    value={newRoutineName}
-                    onChange={(e) => setNewRoutineName(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleCreateRoutine()}
-                    className="flex-grow"
-                  />
-                  <Button 
-                    onClick={handleCreateRoutine}
-                    className="bg-blue-600 hover:bg-blue-700"
-                    disabled={!newRoutineName.trim()}
-                  >
-                    <Plus className="h-5 w-5 mr-2" />
-                    Add
-                  </Button>
-                </div>
-
                 {/* Routines List */}
                 <div className="space-y-2">
-                {inactiveRoutines.map((routine) => (
-                  <div 
-                    key={routine.ID}
-                    className="flex items-center justify-between p-3 bg-gray-800 rounded-lg"
-                  >
-                    <span>{routine.name}</span>
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleActivateRoutine(routine.ID)}
-                        className="text-green-500 hover:text-green-400"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEditClick(routine)}
-                        className="text-blue-500 hover:text-blue-400"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="text-red-500 hover:text-red-400"
-                        onClick={() => handleDeleteClick(routine.ID)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <div className="mb-4 flex space-x-2">
+                    <Input
+                      placeholder="New Routine Name"
+                      value={newRoutineName}
+                      onChange={(e) => setNewRoutineName(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleCreateRoutine()}
+                      className="flex-grow"
+                    />
+                    <Button 
+                      onClick={handleCreateRoutine}
+                      className="bg-blue-600 hover:bg-blue-700"
+                      disabled={!newRoutineName.trim()}
+                    >
+                      <Plus className="h-5 w-5 mr-2" />
+                      Add
+                    </Button>
                   </div>
-                ))}
+                  
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEndInactive}
+                  >
+                    <SortableContext
+                      items={inactiveRoutines.map(routine => routine.ID)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-2">
+                        {inactiveRoutines.map((routine) => (
+                          <SortableInactiveRoutine
+                            key={routine.ID}
+                            routine={routine}
+                            handleActivateRoutine={handleActivateRoutine}
+                            handleEditClick={handleEditClick}
+                            handleDeleteClick={handleDeleteClick}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
                 </div>
               </>
             ) : (

@@ -877,3 +877,40 @@ def bulk_import_routine_items(routine_id):
     except Exception as e:
         app.logger.error(f"Error importing routine items: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/routines/order', methods=['PUT'])
+def update_routines_order():
+    """Update the order of routines in the Routines sheet"""
+    try:
+        app.logger.debug("Received routines order update request")
+        updates = request.json
+        app.logger.debug(f"Updates to apply: {updates}")
+        
+        # Get the Routines sheet
+        spread = get_spread()
+        routines_sheet = spread.worksheet('Routines')
+        
+        # Get existing routines
+        existing_routines = sheet_to_records(routines_sheet, is_routine_worksheet=True)
+        
+        # Create a map of ID to new order
+        order_map = {update['A']: update['D'] for update in updates}
+        
+        # Update orders for routines that are in the updates
+        for routine in existing_routines:
+            if routine['A'] in order_map:
+                routine['D'] = order_map[routine['A']]
+        
+        # Write back to sheet
+        success = records_to_sheet(routines_sheet, existing_routines, is_routine_worksheet=True)
+        
+        if success:
+            app.logger.debug("Successfully updated routines order")
+            return jsonify({"success": True})
+            
+        app.logger.error("Failed to write updated order to sheet")
+        return jsonify({"error": "Failed to update order"}), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error updating routines order: {str(e)}")
+        return jsonify({"error": str(e)}), 500

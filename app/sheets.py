@@ -214,8 +214,24 @@ def create_routine(routine_name):
         if any(r['B'].lower() == routine_name.lower() for r in current_routines):  # Column B for name
             raise ValueError(f"Routine '{routine_name}' already exists")
             
-        # Generate new ID
-        new_id = max([int(float(r['A'])) for r in current_routines], default=0) + 1  # Column A for ID
+        # Get all worksheet names to avoid conflicts
+        all_worksheets = spread.worksheets()
+        existing_names = set(ws.title for ws in all_worksheets)
+        logging.debug(f"Existing worksheet names: {existing_names}")
+        
+        # Find the next available ID that doesn't conflict with existing worksheet names
+        used_ids = set()
+        # Add IDs from existing routines
+        used_ids.update(int(float(r['A'])) for r in current_routines)
+        # Add any numeric worksheet names that might exist
+        used_ids.update(int(float(name)) for name in existing_names if name.replace('.', '').isdigit())
+        
+        if used_ids:
+            new_id = max(used_ids) + 1
+        else:
+            new_id = 1
+            
+        logging.debug(f"Selected new ID: {new_id}")
         
         # Generate new order
         new_order = max([int(float(r['D'])) for r in current_routines], default=-1) + 1  # Column D for order
@@ -632,38 +648,98 @@ def delete_routine(routine_id):
     try:
         spread = get_spread()
         
+        # Convert routine_id to integer for comparison
+        routine_id_int = int(float(routine_id))
+        logging.debug(f"Attempting to delete routine with ID: {routine_id_int}")
+        
+        # First check if this is the active routine and deactivate if needed
+        active_id = get_active_routine()
+        if active_id and int(float(active_id)) == routine_id_int:
+            logging.debug(f"Deactivating routine {routine_id_int} before deletion")
+            set_routine_active(routine_id_int, active=False)
+        
         # Get routine info from Routines sheet
         routines = get_all_routine_records()
-        routine = next((r for r in routines if r['A'] == routine_id), None)  # Column A for ID
+        routine = next((r for r in routines if int(float(r['A'])) == routine_id_int), None)  # Column A for ID
         
         if not routine:
-            raise ValueError(f"Routine with ID {routine_id} not found")
+            logging.error(f"Routine with ID {routine_id_int} not found in routines list")
+            raise ValueError(f"Routine with ID {routine_id_int} not found")
+            
+        logging.debug(f"Found routine to delete: {routine}")
+        
+        # Get the order value before deletion
+        deleted_order = int(float(routine['D']))  # Column D for order
+        logging.debug(f"Routine to delete has order: {deleted_order}")
             
         # Delete the worksheet using ID as sheet name
-        worksheet = spread.worksheet(str(routine_id))
-        spread.del_worksheet(worksheet)
-        
-        # Remove from Routines index
-        routines_sheet = spread.worksheet('Routines')
-        records = sheet_to_records(routines_sheet)
-        updated_records = [r for r in records if r['A'] != routine_id]  # Column A for ID
-        
-        # Update order for remaining routines
-        deleted_order = int(float(routine['D']))  # Column D for order
-        for record in updated_records:
-            current_order = int(float(record['D']))  # Column D for order
-            if current_order > deleted_order:
-                record['D'] = str(current_order - 1)  # Column D for order
-                
-        # Write back to sheet
-        success = records_to_sheet(routines_sheet, updated_records)
-        if success:
-            invalidate_caches()
+        try:
+            # List all worksheets first to debug
+            all_worksheets = spread.worksheets()
+            worksheet_names = [ws.title for ws in all_worksheets]
+            logging.debug(f"Available worksheets: {worksheet_names}")
             
-        return success
+            routine_id_str = str(routine_id_int)
+            logging.debug(f"Looking for worksheet with title: {routine_id_str}")
+            
+            # Try to get the worksheet first
+            try:
+                worksheet = spread.worksheet(routine_id_str)
+                logging.debug(f"Found worksheet with title: {worksheet.title}")
+            except Exception as ws_get_error:
+                logging.error(f"Error getting worksheet: {str(ws_get_error)}")
+                logging.error(f"Error type: {type(ws_get_error)}")
+                raise
+            
+            # If we got the worksheet, try to delete it
+            spread.del_worksheet(worksheet)
+            logging.debug(f"Successfully deleted worksheet for routine {routine_id_str}")
+        except gspread.exceptions.WorksheetNotFound as wnf:
+            logging.warning(f"Worksheet {routine_id_str} not found, continuing with routine deletion")
+            # Continue even if worksheet doesn't exist - it might have been deleted previously
+            pass
+        except Exception as ws_error:
+            logging.error(f"Error deleting worksheet: {str(ws_error)}")
+            logging.error(f"Error type: {type(ws_error)}")
+            raise
+        
+        # Remove from Routines index and update orders
+        try:
+            routines_sheet = spread.worksheet('Routines')
+            records = sheet_to_records(routines_sheet)
+            logging.debug(f"Current records before deletion: {records}")
+            
+            # Remove the routine and update orders for remaining routines
+            updated_records = []
+            for record in records:
+                current_id = int(float(record['A']))
+                if current_id != routine_id_int:
+                    current_order = int(float(record['D']))
+                    if current_order > deleted_order:
+                        # Decrease order by 1 for all routines that were after the deleted one
+                        record['D'] = str(current_order - 1)
+                    updated_records.append(record)
+            
+            logging.debug(f"Updated records after reordering: {updated_records}")
+                    
+            # Write back to sheet
+            success = records_to_sheet(routines_sheet, updated_records)
+            if success:
+                invalidate_caches()
+                logging.debug("Successfully updated Routines index sheet")
+                return True
+            else:
+                logging.error("Failed to write updated records back to Routines sheet")
+                raise Exception("Failed to update Routines index sheet")
+        except Exception as idx_error:
+            logging.error(f"Error updating Routines index: {str(idx_error)}")
+            raise
         
     except Exception as e:
         logging.error(f"Error in delete_routine: {str(e)}")
+        logging.error(f"Error type: {type(e)}")
+        if hasattr(e, '__dict__'):
+            logging.error(f"Error details: {e.__dict__}")
         return False
 
 def update_routine_item(routine_id, item_id, item):
