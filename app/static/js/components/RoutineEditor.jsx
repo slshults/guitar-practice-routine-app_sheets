@@ -87,7 +87,7 @@ const SortableRoutineItem = React.memo(({ item, onRemove }) => {
   );
 });
 
-export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineChange }) => {
+export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineChange, items = [] }) => {
   const {
     availableItems,
     selectedItems,
@@ -99,8 +99,7 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
     addToRoutine,
     removeFromRoutine,
     updateRoutineOrder,
-    createRoutine,
-  } = useRoutineEditor(routine?.id, routine?.details);
+  } = useRoutineEditor(routine?.id, routine?.details, items);
 
   const [newRoutineName, setNewRoutineName] = useState(routine?.name || '');
   const [error, setError] = useState(null);
@@ -181,11 +180,13 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
       if (!routine?.id) {
         // For new routines, just update local state
         setSelectedItems(prev => [...prev, {
-          'A': item['A'],  // ID
-          'B': item['B'],  // Item ID
-          'C': prev.length.toString(),  // Order
-          'D': 'FALSE',  // Completed
-          ...item  // Include all other item properties
+          routineEntry: {
+            'A': item['A'],  // ID
+            'B': item['B'],  // Item ID
+            'C': prev.length.toString(),  // Order
+            'D': 'FALSE',  // Completed
+          },
+          itemDetails: item  // Include all item properties
         }]);
       } else {
         // For existing routines, call API through the hook

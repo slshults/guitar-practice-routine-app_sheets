@@ -1,9 +1,7 @@
 // app/static/js/hooks/useRoutineEditor.js
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { usePracticeItems } from './usePracticeItems';
 
-export const useRoutineEditor = (routineId = null, initialRoutineDetails = null) => {
-  const { items: allItems } = usePracticeItems();
+export const useRoutineEditor = (routineId = null, initialRoutineDetails = null, availableItems = []) => {
   const [selectedItems, setSelectedItems] = useState([]);
   const [itemDetails, setItemDetails] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,14 +43,14 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null)
   };
 
   // Filter available items based on search query and exclude selected items
-  const availableItems = useMemo(() => {
+  const filteredItems = useMemo(() => {
     console.log('=== DEBUG START ===');
-    console.log('allItems from usePracticeItems:', allItems);
+    console.log('availableItems from props:', availableItems);
     console.log('selectedItems from routine:', selectedItems);
     // Get Item IDs from routine entries (column B)
-    const selectedItemIds = new Set(selectedItems.map(item => item.routineEntry['B']));
+    const selectedItemIds = new Set(selectedItems.map(item => item.itemDetails?.['B'] || item.routineEntry?.['B']));
     console.log('selectedItemIds:', Array.from(selectedItemIds));
-    const filtered = allItems.filter(item => {
+    const filtered = availableItems.filter(item => {
       const isSelected = selectedItemIds.has(item['B']);  // Column B is Item ID
       const matchesSearch = item['C']?.toLowerCase().includes(searchQuery.toLowerCase());  // Column C is Title
       console.log(`Item ${item['B']}: isSelected=${isSelected}, matchesSearch=${matchesSearch}`);
@@ -61,7 +59,7 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null)
     console.log('filtered items:', filtered);
     console.log('=== DEBUG END ===');
     return filtered;
-  }, [allItems, selectedItems, searchQuery]);
+  }, [availableItems, selectedItems, searchQuery]);
 
   const addToRoutine = async (routineId, itemId) => {
     try {
@@ -96,8 +94,6 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null)
       // Update local state immediately for better UX
       setSelectedItems(prev => prev.filter(item => item.routineEntry['A'] !== routineEntryId));
       
-      // Then refresh the routine to ensure sync with backend
-      await fetchRoutine();
       return true;
     } catch (err) {
       console.error('Error removing item:', err);
@@ -155,19 +151,15 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null)
         return updated;
       });
 
-      // Refresh the routine to ensure sync with backend
-      await fetchRoutine();
-
-      console.log('Order update successful');
       return true;
     } catch (err) {
-      console.error('Error updating order:', err);
+      console.error('Error updating routine order:', err);
       return false;
     }
   };
 
   return {
-    availableItems,
+    availableItems: filteredItems,
     selectedItems,
     setSelectedItems,
     searchQuery,

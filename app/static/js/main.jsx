@@ -8,6 +8,12 @@ import { PracticePage } from '@components/PracticePage';
 import NavMenu from '@components/NavMenu';
 import RoutinesPage from '@components/RoutinesPage';
 import ImportsPage from '@components/ImportsPage';
+import { usePracticeItems } from '@hooks/usePracticeItems';
+
+const ItemsPage = () => {
+  const { items, refreshItems } = usePracticeItems();
+  return <PracticeItemsList items={items} onItemsChange={refreshItems} />;
+};
 
 const PageContent = () => {
   const { activePage } = useNavigation();
@@ -18,7 +24,7 @@ const PageContent = () => {
     case 'Routines':
       return <RoutinesPage />;
     case 'Items':
-      return <PracticeItemsList />;
+      return <ItemsPage />;
     case 'Imports':
       return <ImportsPage />;
     default:

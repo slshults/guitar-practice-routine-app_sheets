@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@hooks/useAuth';
+import { usePracticeItems } from '@hooks/usePracticeItems';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
@@ -133,6 +134,7 @@ const SortableInactiveRoutine = React.memo(({ routine, handleActivateRoutine, ha
 
 const RoutinesPage = () => {
   const { isAuthenticated, checking, handleLogout } = useAuth();
+  const { items } = usePracticeItems();
   const [newRoutineName, setNewRoutineName] = useState('');
   const [routines, setRoutines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -617,6 +619,7 @@ const RoutinesPage = () => {
         onOpenChange={setIsEditOpen}
         routine={editingRoutine}
         onRoutineChange={handleRoutineChange}
+        items={items}
       />
     </>
   );

@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
-import { usePracticeItems } from '@hooks/usePracticeItems';
 import { ItemEditor } from './ItemEditor';
 import {
   DndContext,
@@ -91,8 +90,7 @@ const SortableItem = React.memo(({ item, onEdit, onDelete }) => {
   );
 });
 
-export const PracticeItemsList = () => {
-  const { items, loading, error, deleteItem, updateItems, refreshItems } = usePracticeItems();
+export const PracticeItemsList = ({ items = [], onItemsChange }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -109,8 +107,13 @@ export const PracticeItemsList = () => {
     if (!itemToDelete) return;
     setIsDeleting(true);
     try {
-      await deleteItem(itemToDelete);
-      await refreshItems(); // Force refresh
+      const response = await fetch(`/api/items/${itemToDelete}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to delete item');
+      }
+      onItemsChange();
     } catch (err) {
       console.error('Delete failed:', err);
     } finally {
@@ -124,12 +127,8 @@ export const PracticeItemsList = () => {
     setIsEditOpen(true);
   };
 
-  const handleItemChange = async () => {
-    await refreshItems();
-  };
-
   const handleSave = async () => {
-    await refreshItems();
+    onItemsChange();
     setEditingItem(null);
     setIsEditOpen(false);
   };
@@ -156,10 +155,20 @@ export const PracticeItemsList = () => {
       }));
       
       // Send complete new state
-      await updateItems(withNewOrder);
+      const response = await fetch('/api/items/order', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(withNewOrder),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update items');
+      }
       
       // Force refresh
-      await refreshItems();
+      onItemsChange();
     } catch (error) {
       console.error('Reorder failed:', error);
     }
@@ -180,9 +189,6 @@ export const PracticeItemsList = () => {
   const filteredItems = items.filter((item) =>
     item?.['C']?.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  if (loading) return <div className="text-2xl text-center p-8">Loading practice items...</div>;
-  if (error) return <div className="text-2xl text-red-500 text-center p-8">{error}</div>;
 
   return (
     <>
@@ -269,4 +275,4 @@ export const PracticeItemsList = () => {
       </AlertDialog>
     </>
   );
-};
+}
