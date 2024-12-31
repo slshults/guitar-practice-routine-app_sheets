@@ -5,11 +5,18 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@ui/dialog';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
 import { Textarea } from '@ui/textarea';
 import { Label } from '@ui/label';
+import { Loader2, Book } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@ui/tooltip";
 
 export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) => {
   const [formData, setFormData] = useState({
@@ -122,14 +129,13 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
+            <Label htmlFor="songbook">Songbook Folder</Label>
+            <Input
+              id="songbook"
               value={formData['F']}
               onChange={(e) => handleFormChange('F', e.target.value)}
-              placeholder="Enter item description"
-              className="h-24 bg-gray-900 text-white"
-              autocomplete="off"
+              placeholder="D:\Users\Steven\Documents\Guitar\Songbook\SongName"
+              className="bg-gray-900 font-mono"
             />
           </div>
 
@@ -177,6 +183,121 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
         </form>
       </DialogContent>
     </Dialog>
+  );
+};
+
+export const BulkSongbookUpdate = ({ onComplete }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [paths, setPaths] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsUpdating(true);
+    try {
+      const response = await fetch('/api/items/update-songbook-paths', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          paths: paths.split('\n').filter(p => p.trim()),
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setResult(data);
+        onComplete?.();
+      } else {
+        throw new Error(data.error || 'Failed to update paths');
+      }
+    } catch (err) {
+      console.error('Update error:', err);
+      setResult({ error: err.message });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  return (
+    <>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsOpen(true)}
+              className="text-gray-400 hover:text-gray-200"
+            >
+              <Book className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Bulk Update Songbook Paths</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="max-w-2xl bg-gray-800">
+          <DialogHeader>
+            <DialogTitle>Bulk Update Songbook Paths</DialogTitle>
+            <DialogDescription>
+              Paste your folder paths, one per line
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="paths">Folder Paths</Label>
+              <Textarea
+                id="paths"
+                value={paths}
+                onChange={(e) => setPaths(e.target.value)}
+                placeholder="D:\Path\To\Songbook\Folder"
+                className="h-64 bg-gray-900 text-white font-mono"
+                disabled={isUpdating}
+              />
+            </div>
+
+            {result && (
+              <div className={`text-sm ${result.error ? 'text-red-500' : 'text-green-500'}`}>
+                {result.error ? result.error : `Updated ${result.updated_count} items successfully!`}
+              </div>
+            )}
+
+            <div className="flex justify-end space-x-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsOpen(false)}
+                className="text-gray-300 hover:text-white"
+                disabled={isUpdating}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700"
+                disabled={isUpdating || !paths.trim()}
+              >
+                {isUpdating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update Paths'
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 

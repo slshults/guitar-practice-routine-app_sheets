@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
-import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw, Book } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 
 // Custom Play icon with solid triangle
@@ -452,12 +452,30 @@ export const PracticePage = () => {
                     {/* Description */}
                     <div className="space-y-2 px-4">
                       <h4 className="text-sm text-gray-400 flex items-center">
-                        <Timer className="h-4 w-4 mr-2" />
-                        Things to remember
+                        <Book className="h-4 w-4 mr-2" />
+                        Songbook
                       </h4>
-                      <p className="text-gray-500 italic">
-                        {routineItem.details?.['F'] || "You haven't added a description for this item yet."}  {/* Column F is Description */}
-                      </p>
+                      {routineItem.details?.['F'] ? (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fetch('/api/open-folder', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({ path: routineItem.details['F'] })
+                            }).catch(err => console.error('Error opening folder:', err));
+                          }}
+                          className="text-blue-500 hover:text-blue-400 hover:underline flex items-center"
+                        >
+                          📑 Open Songbook Folder
+                        </button>
+                      ) : (
+                        <p className="text-gray-500 italic">
+                          No songbook folder linked yet.
+                        </p>
+                      )}
                     </div>
 
                     {/* Notes toggle */}

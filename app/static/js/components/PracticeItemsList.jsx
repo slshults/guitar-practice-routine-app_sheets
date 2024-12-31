@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
-import { ItemEditor } from './ItemEditor';
+import { ItemEditor, BulkSongbookUpdate } from './ItemEditor';
 import {
   DndContext,
   closestCenter,
@@ -195,16 +195,19 @@ export const PracticeItemsList = ({ items = [], onItemsChange }) => {
       <Card className="w-full max-w-4xl bg-gray-900 text-gray-100">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-2xl">Practice Items</CardTitle>
-          <Button 
-            className="bg-blue-600 hover:bg-blue-700 text-lg py-6 px-8"
-            onClick={() => {
-              setEditingItem(null);
-              setIsEditOpen(true);
-            }}
-          >
-            <Plus className="mr-3 h-5 w-5" />
-            Add Item
-          </Button>
+          <div className="flex items-center space-x-2">
+            <Button 
+              className="bg-blue-600 hover:bg-blue-700 text-lg px-4 py-6"
+              onClick={() => {
+                setEditingItem(null);
+                setIsEditOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-5 w-5" />
+              Add Item
+            </Button>
+            <BulkSongbookUpdate onComplete={onItemsChange} />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="mb-6">
