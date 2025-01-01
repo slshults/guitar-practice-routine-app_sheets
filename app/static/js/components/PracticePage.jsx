@@ -263,6 +263,24 @@ export const PracticePage = () => {
               next.delete(routineEntryId);
               return next;
             });
+
+            // When marking as complete:
+            // 1. Find the current item's index
+            const currentIndex = routine.items.findIndex(item => item['A'] === routineEntryId);
+            // 2. Collapse current item
+            setExpandedItems(prev => {
+              const next = new Set(prev);
+              next.delete(routineEntryId);
+              // 3. If there's a next item, expand it
+              if (currentIndex < routine.items.length - 1) {
+                const nextItem = routine.items[currentIndex + 1];
+                next.add(nextItem['A']);
+                // Initialize timer and fetch notes for next item
+                initTimer(nextItem['A'], nextItem.details?.['E'] || 5);
+                fetchNotes(nextItem['B']);
+              }
+              return next;
+            });
           } else {
             next.delete(routineEntryId);
           }
