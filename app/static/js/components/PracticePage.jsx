@@ -366,6 +366,7 @@ export const PracticePage = () => {
 
       <div className="space-y-4">
         {routine?.items?.map((routineItem) => {
+          console.log('Full Routine Item:', JSON.stringify(routineItem, null, 2));
           const isExpanded = expandedItems.has(routineItem['A']);  // Column A is ID
           const isNotesExpanded = expandedNotes.has(routineItem['A']);
           const isTimerActive = activeTimers.has(routineItem['A']);
@@ -469,10 +470,17 @@ export const PracticePage = () => {
                   <div className="mt-8 space-y-4">
                     {/* Description */}
                     <div className="space-y-2 px-4">
-                      <h4 className="text-sm text-gray-400 flex items-center">
-                        <Book className="h-4 w-4 mr-2" />
-                        Songbook
-                      </h4>
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-sm text-gray-400 flex items-center">
+                          <Book className="h-4 w-4 mr-2" />
+                          Songbook
+                        </h4>
+                        {routineItem.details?.['H'] && (
+                          <div className="text-gray-300 text-sm font-bold">
+                            {routineItem.details['H']}
+                          </div>
+                        )}
+                      </div>
                       {routineItem.details?.['F'] ? (
                         <button 
                           onClick={(e) => {
@@ -551,19 +559,22 @@ export const PracticePage = () => {
               {expandedItems.has(routineItem['A']) && (
                 <div className="px-5 pb-5">
                   <div className="text-gray-400">
-                    {routineItem.details?.['F']}  {/* Column F is Description */}
                   </div>
-                  {routineItem.details?.['H'] && (  /* Column H is Tuning */
-                    <div className="mt-2 text-gray-500">
-                      Tuning: {routineItem.details['H']}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* Add NoteEditor */}
+      <NoteEditor
+        open={isNoteEditorOpen}
+        onOpenChange={setIsNoteEditorOpen}
+        itemId={editingNoteItemId}
+        currentNote={editingNoteItemId ? notes[editingNoteItemId] : ''}
+        onNoteSave={handleNoteSave}
+      />
     </div>
   );
 }; 
