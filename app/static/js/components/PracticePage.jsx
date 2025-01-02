@@ -48,6 +48,13 @@ const formatTime = (seconds) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
+// Format minutes to HH:MM
+const formatHoursAndMinutes = (minutes) => {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+};
+
 export const PracticePage = () => {
   const { routine, loading, error } = useActiveRoutine();
   const [expandedItems, setExpandedItems] = useState(new Set());
@@ -351,17 +358,41 @@ export const PracticePage = () => {
     }
   };
 
+  // Calculate total and completed minutes
+  const { totalMinutes, completedMinutes } = useMemo(() => {
+    if (!routine?.items) return { totalMinutes: 0, completedMinutes: 0 };
+    
+    const total = routine.items.reduce((sum, item) => {
+      const duration = parseInt(item.details?.['E']) || 0;
+      return sum + duration;
+    }, 0);
+    
+    const completed = routine.items
+      .filter(item => completedItems.has(item['A']))
+      .reduce((sum, item) => {
+        const duration = parseInt(item.details?.['E']) || 0;
+        return sum + duration;
+      }, 0);
+    
+    return { totalMinutes: total, completedMinutes: completed };
+  }, [routine, completedItems]);
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">{routine?.name}</h1>
-        <Button
-          variant="outline"
-          onClick={resetProgress}
-          className="text-gray-300 hover:text-white"
-        >
-          Reset Progress
-        </Button>
+        <div className="flex flex-col items-end gap-2">
+          <div className="text-xl font-mono">
+            {formatHoursAndMinutes(completedMinutes)} / {formatHoursAndMinutes(totalMinutes - completedMinutes)}
+          </div>
+          <Button
+            variant="outline"
+            onClick={resetProgress}
+            className="text-gray-300 hover:text-white"
+          >
+            Reset Progress
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-4">
