@@ -82,7 +82,7 @@ npm run build || handle_error "Failed to build assets"
 
 # Start Flask with auto-reloader (but in prod mode)
 echo -e "${GREEN}Starting Flask server...${NC}"
-FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run &
+FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run --host=0.0.0.0 --port=5000 &
 FLASK_PID=$!
 PIDS+=($FLASK_PID)
 
@@ -117,7 +117,7 @@ echo -e "${GREEN}Starting Python file watcher...${NC}"
             kill $FLASK_PID
             wait $FLASK_PID 2>/dev/null
         fi
-        FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run &
+        FLASK_ENV=production FLASK_DEBUG=1 FLASK_APP=run.py flask run --host=0.0.0.0 --port=5000 &
         FLASK_PID=$!
         PIDS+=($FLASK_PID)
         sleep 2

@@ -2,8 +2,9 @@ import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
-import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw, Book } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw, Book, Music } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
+import { ChordChartEditor } from './ChordChartEditor';
 
 // Custom Play icon with solid triangle
 const PlayIcon = ({ className }) => (
@@ -64,6 +65,38 @@ export const PracticePage = () => {
   const [isNoteEditorOpen, setIsNoteEditorOpen] = useState(false);
   const [editingNoteItemId, setEditingNoteItemId] = useState(null);
   const [timers, setTimers] = useState({});
+  const [expandedChords, setExpandedChords] = useState(new Set());
+  const chordChartRefs = useRef({});
+  const [chordCharts, setChordCharts] = useState({});
+  const [showChordEditor, setShowChordEditor] = useState({});
+
+  // Add some test chord charts for development
+  useEffect(() => {
+    if (routine?.items?.length > 0) {
+      const firstItemId = routine.items[0]['A'];
+      setChordCharts(prev => ({
+        ...prev,
+        [firstItemId]: [
+          {
+            id: 'test1',
+            chordName: 'C',
+            section: 'Verse',
+            tuning: 'EADGBE',
+            position: 1,
+            fretPositions: [0, 1, 0, 2, 3, 0]
+          },
+          {
+            id: 'test2', 
+            chordName: 'G',
+            section: 'Chorus',
+            tuning: 'EADGBE',
+            position: 3,
+            fretPositions: [3, 2, 0, 0, 3, 3]
+          }
+        ]
+      }));
+    }
+  }, [routine]);
   
   const completedItemIds = useMemo(() => {
     if (routine?.items) {
@@ -377,6 +410,127 @@ export const PracticePage = () => {
     return { totalMinutes: total, completedMinutes: completed };
   }, [routine, completedItems]);
 
+  // Effect to handle chord chart initialization
+  useEffect(() => {
+    // Load SVGuitar UMD script if not already loaded
+    if (!window.svguitar) {
+      const script = document.createElement('script');
+      script.src = 'https://omnibrain.github.io/svguitar/js/svguitar.umd.js';
+      script.async = true;
+      script.onload = () => {
+        initializeCharts();
+      };
+      document.body.appendChild(script);
+    } else {
+      initializeCharts();
+    }
+
+    function initializeCharts() {
+      expandedChords.forEach(itemId => {
+        // Get all charts for this item
+        const itemCharts = chordCharts[itemId] || [];
+        
+        itemCharts.forEach(chartData => {
+          const container = document.getElementById(`chord-chart-${itemId}-${chartData.id}`);
+          if (!container || chordChartRefs.current[`${itemId}-${chartData.id}`]) return;
+
+          try {
+            const chart = new window.svguitar.SVGuitarChord(`#chord-chart-${itemId}-${chartData.id}`);
+
+            chart
+              .configure({
+                strings: 6,
+                frets: 5,
+                position: chartData.position || 1,
+                tuning: chartData.tuning.split(''),
+                fretLabelPosition: 'right',
+                fretLabelFontSize: 6,
+                width: 70,
+                height: 85,
+                stringLabelFontSize: 7,
+                fretNumbersFontSize: 7,
+                stringWidth: 0.6,
+                fretWidth: 0.6,
+                strokeWidth: 0.6,
+              })
+              .chord({
+                fingers: chartData.fretPositions.map((pos, idx) => [idx + 1, pos]),
+                barres: []
+              })
+              .draw();
+
+            chordChartRefs.current[`${itemId}-${chartData.id}`] = chart;
+            
+            // Remove hardcoded width/height attributes and fix with CSS
+            const svg = container.querySelector('svg');
+            if (svg) {
+              svg.removeAttribute('width');
+              svg.removeAttribute('height');
+              svg.style.width = '100%';
+              svg.style.height = '100%';
+              svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+            }
+          } catch (error) {
+            console.error('Error initializing chord chart:', error);
+          }
+        });
+      });
+    }
+
+    // Cleanup function
+    return () => {
+      expandedChords.forEach(itemId => {
+        const itemCharts = chordCharts[itemId] || [];
+        itemCharts.forEach(chart => {
+          const refKey = `${itemId}-${chart.id}`;
+          if (chordChartRefs.current[refKey]) {
+            const container = document.getElementById(`chord-chart-${itemId}-${chart.id}`);
+            if (container) {
+              container.innerHTML = '';
+            }
+            delete chordChartRefs.current[refKey];
+          }
+        });
+      });
+    };
+  }, [expandedChords, chordCharts]);
+
+  const toggleChords = (itemId, e) => {
+    e?.stopPropagation();
+    setExpandedChords(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const handleSaveChordChart = (itemId, chartData) => {
+    setChordCharts(prev => {
+      const itemCharts = prev[itemId] || [];
+      return {
+        ...prev,
+        [itemId]: [...itemCharts, { ...chartData, id: Date.now() }]
+      };
+    });
+    // Hide the editor after saving
+    setShowChordEditor(prev => ({
+      ...prev,
+      [itemId]: false
+    }));
+  };
+
+  const toggleChordEditor = (itemId, e) => {
+    e?.stopPropagation();
+    setShowChordEditor(prev => ({
+      ...prev,
+      [itemId]: !prev[itemId]
+    }));
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-8">
@@ -397,7 +551,6 @@ export const PracticePage = () => {
 
       <div className="space-y-4">
         {routine?.items?.map((routineItem) => {
-          console.log('Full Routine Item:', JSON.stringify(routineItem, null, 2));
           const isExpanded = expandedItems.has(routineItem['A']);  // Column A is ID
           const isNotesExpanded = expandedNotes.has(routineItem['A']);
           const isTimerActive = activeTimers.has(routineItem['A']);
@@ -406,6 +559,7 @@ export const PracticePage = () => {
             ? timers[routineItem['A']] 
             : (routineItem.details?.['E'] || 5) * 60;  // Column E is Duration
           const itemNotes = notes[routineItem['B']] || '';
+          const isChordsExpanded = expandedChords.has(routineItem['A']);
           
           return (
             <div
@@ -418,8 +572,7 @@ export const PracticePage = () => {
               >
                 <div className="flex items-center space-x-4">
                   <button
-                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center
-                      ${isCompleted 
+                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isCompleted 
                         ? 'bg-green-500 border-green-500 text-white' 
                         : 'border-gray-400 text-transparent hover:border-gray-300'}`}
                     onClick={(e) => toggleComplete(routineItem['A'], e)}  // Column A is ID
@@ -497,43 +650,76 @@ export const PracticePage = () => {
                     </div>
                   </div>
 
-                  {/* Notes section */}
-                  <div className="mt-8 space-y-4">
-                    {/* Description */}
-                    <div className="space-y-2 px-4">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-sm text-gray-400 flex items-center">
-                          <Book className="h-4 w-4 mr-2" />
-                          Songbook
-                        </h4>
-                        {routineItem.details?.['H'] && (
-                          <div className="text-gray-300 text-sm font-bold">
-                            {routineItem.details['H']}
+                  {/* Description */}
+                  <div className="space-y-2 px-4">
+                    {/* Chord Charts toggle */}
+                    <div 
+                      className="flex items-center justify-between p-2 hover:bg-gray-700 rounded cursor-pointer"
+                      onClick={(e) => toggleChords(routineItem['A'], e)}
+                    >
+                      <div className="flex items-center">
+                        {isChordsExpanded ? (
+                          <ChevronDown className="h-5 w-5 text-gray-400 mr-2" />
+                        ) : (
+                          <ChevronRight className="h-5 w-5 text-gray-400 mr-2" />
+                        )}
+                        <h3 className="text-xl text-gray-300 flex items-center">
+                          <Music className="h-5 w-5 mr-2" />
+                          Chord Charts
+                        </h3>
+                      </div>
+                    </div>
+
+                    {/* Collapsible chord chart content */}
+                    {isChordsExpanded && (
+                      <div className="bg-gray-700 rounded-lg p-4">
+                        {/* Display existing chord charts */}
+                        {chordCharts[routineItem['A']]?.length > 0 && (
+                          <div className="mb-4 space-y-4">
+                            {Object.entries(
+                              chordCharts[routineItem['A']]?.reduce((acc, chart) => {
+                                if (!acc[chart.section]) acc[chart.section] = [];
+                                acc[chart.section].push(chart);
+                                return acc;
+                              }, {}) || {}
+                            ).map(([section, charts]) => (
+                              <div key={section} className="space-y-2">
+                                <h4 className="text-lg font-semibold text-gray-300">{section}</h4>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                  {charts.map(chart => (
+                                    <div key={chart.id} className="bg-gray-800 p-2 rounded">
+                                      <div className="text-sm font-mono mb-2">{chart.chordName}</div>
+                                      <div className="relative w-20 h-24 mx-auto">
+                                        <div id={`chord-chart-${routineItem['A']}-${chart.id}`} className="absolute inset-0">
+                                          {/* SVGuitar chart will be rendered here */}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
-                      </div>
-                      {routineItem.details?.['F'] ? (
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            fetch('/api/open-folder', {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                              },
-                              body: JSON.stringify({ path: routineItem.details['F'] })
-                            }).catch(err => console.error('Error opening folder:', err));
-                          }}
-                          className="text-blue-500 hover:text-blue-400 hover:underline flex items-center"
+
+                        {/* Toggle for chord editor */}
+                        <Button
+                          variant="outline"
+                          onClick={(e) => toggleChordEditor(routineItem['A'], e)}
+                          className="w-full mb-4"
                         >
-                          📑 Open Songbook Folder
-                        </button>
-                      ) : (
-                        <p className="text-gray-500 italic">
-                          No songbook folder linked yet.
-                        </p>
-                      )}
-                    </div>
+                          {showChordEditor[routineItem['A']] ? 'Hide Chord Editor' : 'Add New Chord'}
+                        </Button>
+
+                        {/* Chord editor */}
+                        {showChordEditor[routineItem['A']] && (
+                          <ChordChartEditor
+                            defaultTuning={routineItem.details?.['H'] || 'EADGBE'}
+                            onSave={(chartData) => handleSaveChordChart(routineItem['A'], chartData)}
+                          />
+                        )}
+                      </div>
+                    )}
 
                     {/* Notes toggle */}
                     <div 
@@ -573,6 +759,37 @@ export const PracticePage = () => {
                         </div>
                       </div>
                     )}
+
+                    {/* Tuning and Songbook section */}
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between">
+                        {/* Songbook folder link */}
+                        {routineItem.details?.['F'] && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fetch('/api/open-folder', {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ path: routineItem.details['F'] })
+                              }).catch(err => console.error('Error opening folder:', err));
+                            }}
+                            className="text-blue-500 hover:text-blue-400 hover:underline flex items-center"
+                          >
+                            <Book className="h-4 w-4 mr-2" />
+                            Open Songbook Folder
+                          </button>
+                        )}
+                        {/* Tuning */}
+                        {routineItem.details?.['H'] && (
+                          <span className="text-sm font-mono font-bold text-gray-400">
+                            {routineItem.details['H']}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Mark as done button */}
