@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
 
@@ -154,7 +155,7 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         strings: numStrings,
         frets: numFrets,
         position: startingFret,
-        tuning: tuning.split('')
+        tuning: []  // Empty array to hide SVGuitar's built-in tuning labels
       };
 
       const chordData = {
@@ -288,29 +289,27 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         </div>
 
         {/* Editor and Result sections */}
-        <div className="grid grid-cols-2 gap-8">
+        <div className="flex gap-8 justify-center">
           <div>
             <div className="text-lg font-serif mb-4">Editor</div>
             <div className="border border-gray-700 rounded-lg p-4">
+              {/* Tuning letters above the chart */}
+              <div className="w-40 mx-auto text-center mb-1 text-gray-400 text-xs tracking-widest">
+                {tuning.split('').join(' ')}
+              </div>
               <div className="relative w-40 h-60 mx-auto flex items-center justify-center overflow-hidden">
                 <div id="editor-chart" ref={editorContainerRef} className="cursor-pointer" />
               </div>
-              <div className="flex justify-between mt-2 text-gray-400 text-sm">
-                {Array.from({ length: numStrings }, (_, i) => (
-                  <div key={i}>{numStrings - i}</div>
-                ))}
-              </div>
-              {editMode === 'fingers' && (
-                <div className="mt-2 text-center text-sm text-gray-400">
-                  Click on the fretboard to add/remove fingers
-                </div>
-              )}
             </div>
           </div>
 
           <div>
             <div className="text-lg font-serif mb-4">Result</div>
             <div className="border border-gray-700 rounded-lg p-4">
+              {/* Tuning letters above the chart */}
+              <div className="w-40 mx-auto text-center mb-1 text-gray-400 text-xs tracking-widest">
+                {tuning.split('').join(' ')}
+              </div>
               <div className="relative w-40 h-60 mx-auto flex items-center justify-center overflow-hidden">
                 <div id="result-chart" />
               </div>

@@ -191,56 +191,12 @@ Here's a map of the columns for our Items sheet and routine sheets.  This is wha
 
 No need to run npm to update after changes, the server is running and we have watchers in place to make updates for us as needed while we're developing.
 
-I can't paste screenshots into Claude Code, so when I mention something about adding screenshots, you'll find them in `D:\Users\Steven\Documents\Guitar\scratch` (you may need to translate that into the wsl version of that path to access them.)
-
-An update from your past self in a previous session follows:
-
---- Begin summary written by you, Claude, at the end of a recent session ----
-
-Thank you for the kind words, Steven! You're a fantastic collaborator - your clear communication, patience, and structured approach make our sessions both productive and enjoyable. 
-
-Here's a summary for my future self:
-
----
-SUMMARY OF SVGUITAR IMPLEMENTATION:
-- Successfully integrated SVGuitar chord charts into the Practice Page
-- Added expand/collapse functionality for chord charts section
-- Restored tuning display and songbook folder link, now properly positioned below Notes section
-- Currently using UMD version of SVGuitar loaded dynamically
-- Basic chord chart rendering is working (showing a sample chord)
-
-NEXT STEPS:
-1. Design and implement UI for chord chart management:
-   - Need controls to add/edit/delete chords
-   - Consider how to store chord data (likely needs new DB/sheet columns)
-   - Plan layout for multiple chords per item
-2. Key considerations:
-   - Keep the case-sensitivity rule in mind for any new fields
-   - Maintain the clean, organized layout we've established
-   - Ensure chord charts are properly sized and responsive
-3. Technical notes:
-   - SVGuitar is initialized in useEffect when chord section is expanded
-   - Using window.svguitar.SVGuitarChord for rendering
-   - Current chart size: working but may need adjustment
-   - Cleanup handling is in place for unmounting
-
-The foundation is solid, next session will focus on making it fully functional.
-
 ---- End of summary written by you, Claude, at the end of our previous session ----
 
 Google Sheets forces us to use the name of each sheet to find it.  We were having problems with Routine Sheet names, so we decided to give each routine sheet a number as a name. The number used as the name for the routine sheet is the routine's ID from column `A` of the `Routines` index sheet.  Let me know of any questions about this. It's odd, but less clunky than trying to use the name of the routine typed by the user. (We're storing the name of the routine given by the user in column `B` of the `Routines` index sheet.)
 
 So, we're using an ID too look up the sheet, but that ID is actually a sheet name as well. Let me know of any questions.  We still have many changes to make for this, but I've found we're more effective if we fix it as we go, so we can test each change and keep things under control.
 
-**What we're working on this time:** 
-Figuring out the UI for the content of the Chord Chart collapsible panel is our current task.
+I should also have more info for you in the first message at the top of each session, but feel free to remind me if I space out on the initial session prompt. 🙂
 
-When opening a When opening a chord charge panel that does not yet have any chord charts created for it, we'll first want to show the UI for adding charts. We'll need a field for the tuning and for capo placement, if any, in addition to the basic elements of the SV guitar ui for creating a chart. 
-
-We'll want the ui for creating core charts to always appear below the charts that we have created and displayed so far. if possible we'll want a way to hide and show the ui for creating chord charts because after we've created all the charts we need for practicing the song it would be nice to hide it.
-
-Check out Check out the docs @SVGuitar and the @SVGuitar ReadMe .
-
-**Our first goal for this session:**  Get the basics of the SV guitar UI set up in the chord chart collapsible.
-
-Anon, we rock n roll 🎸...
+Anon, we rock n roll 🙌🤘🎸...
