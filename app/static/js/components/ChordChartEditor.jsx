@@ -15,7 +15,7 @@ const defaultChartConfig = {
   height: 310             // Even larger height (taller than wide)
 };
 
-export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
+export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) => {
   const [title, setTitle] = useState('');
   const [startingFret, setStartingFret] = useState(1);
   const [numFrets, setNumFrets] = useState(5);
@@ -33,6 +33,60 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
   const editorContainerRef = useRef(null);
+
+  // Autofill function to copy existing chord fingerings
+  const tryAutofill = async (chordName) => {
+    if (!chordName.trim() || !itemId) return;
+    
+    try {
+      console.log(`Trying autofill for chord: "${chordName}"`);
+      
+      // Fetch existing chord charts for this item
+      const response = await fetch(`/api/items/${itemId}/chord-charts`);
+      if (!response.ok) return;
+      
+      const existingChords = await response.json();
+      
+      // Find matching chord name (case-insensitive)
+      const matches = existingChords.filter(chart => 
+        chart.title.toLowerCase() === chordName.toLowerCase()
+      );
+      
+      if (matches.length === 0) {
+        console.log(`No existing chord found for "${chordName}"`);
+        return;
+      }
+      
+      let chordToUse;
+      
+      if (matches.length === 1) {
+        chordToUse = matches[0];
+        console.log(`Found 1 match for "${chordName}", auto-filling...`);
+      } else {
+        // Multiple matches - ask user which one to use
+        console.log(`Found ${matches.length} matches for "${chordName}"`);
+        // For now, just use the first one - we'll add user selection later
+        chordToUse = matches[0];
+      }
+      
+      // Populate editor with existing chord data
+      if (chordToUse) {
+        console.log('Autofilling with chord data:', chordToUse);
+        setStartingFret(chordToUse.startingFret || 1);
+        setNumFrets(chordToUse.numFrets || 5);
+        setNumStrings(chordToUse.numStrings || 6);
+        setTuning(chordToUse.tuning || defaultTuning);
+        setCapo(chordToUse.capo || 0);
+        setFingers(chordToUse.fingers || []);
+        setBarres(chordToUse.barres || []);
+        setOpenStrings(new Set(chordToUse.openStrings || []));
+        setMutedStrings(new Set(chordToUse.mutedStrings || []));
+      }
+      
+    } catch (error) {
+      console.error('Error during autofill:', error);
+    }
+  };
 
   // Initialize SVGuitar
   useEffect(() => {
@@ -324,7 +378,14 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Enter chord name"
+              onBlur={() => tryAutofill(title)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  tryAutofill(title);
+                }
+              }}
+              placeholder="Enter chord name (e.g. Am, C7)"
               className="bg-gray-900"
             />
           </div>

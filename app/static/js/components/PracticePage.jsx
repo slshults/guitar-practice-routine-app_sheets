@@ -1332,6 +1332,7 @@ export const PracticePage = () => {
                         {/* Chord editor */}
                         {showChordEditor[routineItem.details?.A] && (
                           <ChordChartEditor
+                            itemId={routineItem.details?.A}
                             defaultTuning={routineItem.details?.H || 'EADGBE'}
                             onSave={(chartData) => handleSaveChordChart(routineItem.details?.A, chartData)}
                           />
