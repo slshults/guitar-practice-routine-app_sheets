@@ -40,6 +40,7 @@ The application uses **Google Sheets as its database** with the following sheet 
 - `Routines` sheet: Practice routine metadata  
 - Individual routine sheets: Named by routine ID, contain routine items
 - `ActiveRoutine` sheet: Tracks currently active routine
+- `ChordCharts` sheet: Chord diagrams linked to practice items (NEW)
 
 **Data Flow**: React → Flask API routes → `sheets.py` functions → Google Sheets API
 
@@ -90,6 +91,9 @@ The `gpr.sh` script runs:
 - `/api/routines/*`: CRUD operations for practice routines
 - `/api/practice/active-routine`: Get/set active practice routine
 - `/api/auth/status`: Check authentication status
+- `/api/items/<id>/chord-charts`: Get/create chord charts for practice items (NEW)
+- `/api/chord-charts/<id>`: Delete chord charts (NEW)
+- `/api/items/<id>/chord-charts/order`: Reorder chord charts (NEW)
 
 ## Special Considerations
 
@@ -187,16 +191,107 @@ Here's a map of the columns for our Items sheet and routine sheets.  This is wha
 - Column C: order*
 - Column D: completed
 
-\* The "order" column is where we track the order in which the items are displayed on the page. This ties in with our drag-and-drop functionality. When we reorder with drag-and-drop, we only update the 'order' column, we do not try to reorder entire rows in the spreadsheet.
+- The "order" column is where we track the order in which the items are displayed on the page. This ties in with our drag-and-drop functionality. When we reorder with drag-and-drop, we only update the 'order' column, we do not try to reorder entire rows in the spreadsheet.
 
-No need to run npm to update after changes, the server is running and we have watchers in place to make updates for us as needed while we're developing.
+- Google Sheets forces us to use the name of each sheet to find it.  We were having problems with Routine Sheet names, so we decided to give each routine sheet a number as a name. The number used as the name for the routine sheet is the routine's ID from column `A` of the `Routines` index sheet.  Let me know of any questions about this. It's odd, but less clunky than trying to use the name of the routine typed by the user. (We're storing the name of the routine given by the user in column `B` of the `Routines` index sheet.)
 
----- End of summary written by you, Claude, at the end of our previous session ----
+-- So, we're using an ID too look up the sheet, but that ID is actually a sheet name as well. Let me know of any questions.  We still have many changes to make for this, but I've found we're more effective if we fix it as we go, so we can test each change and keep things under control.
 
-Google Sheets forces us to use the name of each sheet to find it.  We were having problems with Routine Sheet names, so we decided to give each routine sheet a number as a name. The number used as the name for the routine sheet is the routine's ID from column `A` of the `Routines` index sheet.  Let me know of any questions about this. It's odd, but less clunky than trying to use the name of the routine typed by the user. (We're storing the name of the routine given by the user in column `B` of the `Routines` index sheet.)
+IMPORTANT:
+- No need to run npm to update after changes, the server is running and we have watchers in place to make updates for us as needed while we're developing.
 
-So, we're using an ID too look up the sheet, but that ID is actually a sheet name as well. Let me know of any questions.  We still have many changes to make for this, but I've found we're more effective if we fix it as we go, so we can test each change and keep things under control.
+- Please don't use `git` commands without discussing it together first. I usually prefer to run commits and pushes in and external terminal window. Thanks.
 
-I should also have more info for you in the first message at the top of each session, but feel free to remind me if I space out on the initial session prompt. 🙂
+- Contextual reminder: In guitar we count strings in order from high pitch to low, so the string on the right side of our charts is string one. Likewise with frets, so fret one is at the top, and when we go "up" a fret, that means the next fret downward on the chart
+
+## SVGuitar Chord Chart Sizing
+
+  The chord chart editor uses a three-part sizing system that must be kept
+  synchronized:
+
+  ### To Adjust Chart Size:
+  1. **SVGuitar Config** (`defaultChartConfig` in ChordChartEditor.jsx):
+     - `width` and `height` - Sets the base SVG dimensions
+     - Current: 220 x 310
+
+  2. **CSS Containers** (both Editor and Result sections):
+     - Chart containers: `w-52 h-80` (208px x 320px)
+     - Tuning letter containers: `w-52` (to match chart width)
+
+  3. **Post-Processing Constraints** (`updateCharts` function):
+     - `maxWidth` and `maxHeight` - Limits SVG size to fit containers
+     - Current: 208px x 320px (matches CSS container dimensions)
+
+  ### Example Size Change:
+  To make charts larger, update all three in proportion:
+  - SVGuitar config: 220x310 → 240x340
+  - CSS containers: w-52 h-80 → w-56 h-84
+  - Post-processing: 208x320 → 224x336
+
+  **Note**: All three must be synchronized or charts will be
+  clipped/distorted. The CSS container size should be slightly smaller than
+  SVGuitar config to allow proper scaling.
+
+## Chord Chart System (NEW)
+
+### Overview
+The application includes a comprehensive chord chart management system with **section organization** for chord progressions. Users can create labeled sections (Verse, Chorus, etc.) with repeat counts and save chord diagrams within each section.
+
+### Database Schema
+**ChordCharts Sheet:**
+- Column A: ChordID (unique identifier)
+- Column B: ItemID (references Items sheet Column A)
+- Column C: Title (chord name like "C Major", "Am7", etc.)
+- Column D: ChordData (JSON with fingers, barres, tuning, capo, **section metadata**)
+- Column E: CreatedAt (timestamp)
+- Column F: Order (display order within an item)
+
+**Section Metadata in ChordData JSON:**
+- `sectionId`: Unique section identifier (e.g., "section-1750638363428")
+- `sectionLabel`: User-defined section name (e.g., "Verse", "Chorus")
+- `sectionRepeatCount`: Repeat notation (e.g., "x4", "x2")
+
+### Architecture
+- **Backend**: Full CRUD functions in `sheets.py` including `update_chord_chart()` for section persistence
+- **API**: RESTful endpoints for creating, reading, updating, deleting chord charts
+- **Frontend**: Interactive chord chart editor with real-time section management
+- **Display**: Organized by labeled sections with repeat counts, 4-per-row grid within sections
+- **Travel-friendly**: Clean separation allows browsing chord charts directly in Google Sheets
+
+### Key Components
+- `ChordChartEditor.jsx`: Interactive chord diagram editor with click detection
+- `PracticePage.jsx`: Section-aware chord chart display with debounced updates
+- Chord chart API endpoints in `routes.py` including `PUT /api/chord-charts/<id>`
+- ChordCharts CRUD functions in `sheets.py` including `update_chord_chart()`
+
+### Section System Features
+- **Real-time editing**: Section labels and repeat counts update immediately in UI
+- **Debounced persistence**: Backend updates use 500ms debounce to prevent keystroke conflicts
+- **Automatic grouping**: Chord charts automatically grouped by section metadata
+- **Persistent sections**: Section data stored in each chord's JSON and survives page refreshes
+
+### Data Flow
+1. User creates chord in interactive editor
+2. Clicks "Add Chord Chart" to save via API
+3. Chart data stored as JSON in ChordCharts sheet
+4. Charts loaded and displayed in 4-per-row grid during practice
+5. SVGuitar renders saved charts for visual display
+
+### Usage
+- Available in practice mode for each song/item
+- Toggle "Add New Chord" to open interactive editor
+- Click on fretboard to place finger positions
+- Enter chord name and save to persist in database
+- Saved charts appear in collapsible "Chord Charts" section
+
+## Development Tools
+
+### Server Log Access
+For debugging during development, you can access server logs via:
+- **Terminal output**: The terminal running `./gpr.sh` shows Flask server logs in real-time
+- **Log files**: Production logs stored in `logs/gpr.log` with rotation (50MB max, 2 files)
+- **Console logging**: Browser console shows frontend errors and debug messages
+
+**Log Rotation**: Logs automatically rotate at 50MB with 2 backup files (100MB total max)
 
 Anon, we rock n roll 🙌🤘🎸...

@@ -11,8 +11,8 @@ const defaultChartConfig = {
   sidePadding: 0.2,       // Standard padding
   fontFamily: 'Arial',
   // Key: set explicit dimensions that work well
-  width: 160,             // Explicit width
-  height: 240             // Explicit height (taller than wide)
+  width: 220,             // Even larger width for better visibility
+  height: 310             // Even larger height (taller than wide)
 };
 
 export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
@@ -25,8 +25,10 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
   const [capo, setCapo] = useState(0);
   
   // Chord data state
-  const [fingers, setFingers] = useState([[1, 1], [2, 2], [6, 3]]); // Default C chord for testing
+  const [fingers, setFingers] = useState([]); // Start with empty chord
   const [barres, setBarres] = useState([]);
+  const [openStrings, setOpenStrings] = useState(new Set()); // Track open strings (0)
+  const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
 
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
@@ -84,38 +86,71 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
     // SVGuitar layout analysis:
     // - There's padding around the actual fretboard
     // - Strings are vertical lines, frets are horizontal
-    // - We need to account for margins and actual fretboard area
+    // - Frets are the spaces BETWEEN the fret wires, not the wires themselves
     
     const chartWidth = rect.width;
     const chartHeight = rect.height;
     
-    // Estimate the actual fretboard area (excluding margins)
-    const marginX = chartWidth * 0.15; // ~15% margin on each side
-    const marginY = chartHeight * 0.1;  // ~10% margin top/bottom
+    // Adjusted margins based on SVGuitar's actual layout
+    const marginX = chartWidth * 0.15;
+    const marginY = chartHeight * 0.12;
     const fretboardWidth = chartWidth - (marginX * 2);
     const fretboardHeight = chartHeight - (marginY * 2);
     
-    // Check if click is within fretboard area
-    if (x < marginX || x > chartWidth - marginX || y < marginY || y > chartHeight - marginY) {
-      console.log('Click outside fretboard area');
+    // Check if click is outside the chart area entirely
+    if (x < marginX || x > chartWidth - marginX) {
+      console.log('Click outside chart area horizontally');
       return;
     }
     
-    // Calculate string (vertical position across width)
+    // Calculate string (vertical position across width) - same for both nut and fretboard
     const relativeX = x - marginX;
-    const stringIndex = Math.round(relativeX / (fretboardWidth / (numStrings - 1)));
+    const stringRatio = relativeX / fretboardWidth;
+    const stringIndex = Math.floor(stringRatio * numStrings);
+    
+    if (stringIndex < 0 || stringIndex >= numStrings) {
+      console.log('Invalid string index');
+      return;
+    }
+    
+    // Convert to SVGuitar's string numbering (1-based, high E = 1)
+    const svguitarString = numStrings - stringIndex; // Flip the order
+    
+    // Check if click is in the nut area (above the fretboard)
+    if (y < marginY) {
+      console.log('Nut area click on string:', svguitarString);
+      toggleNutMarker(svguitarString);
+      return;
+    }
+    
+    // Check if click is within fretboard area
+    if (y > chartHeight - marginY) {
+      console.log('Click below fretboard area');
+      return;
+    }
     
     // Calculate fret (horizontal position down height)
+    // The key fix: SVGuitar frets are 1-based, but we need to map clicks to fret spaces
+    // Each fret occupies 1/numFrets of the fretboard height
     const relativeY = y - marginY;
-    const fretIndex = Math.round(relativeY / (fretboardHeight / numFrets));
+    const fretRatio = relativeY / fretboardHeight;
+    const fretIndex = Math.floor(fretRatio * numFrets) + 1;
 
-    console.log('Calculated:', { stringIndex, fretIndex, numStrings, numFrets });
+    console.log('Calculated:', { 
+      stringIndex, 
+      stringRatio,
+      fretIndex, 
+      fretRatio, 
+      relativeX,
+      fretboardWidth,
+      relativeY, 
+      fretboardHeight,
+      numStrings, 
+      numFrets 
+    });
 
-    if (stringIndex >= 0 && stringIndex < numStrings && fretIndex >= 0 && fretIndex < numFrets) {
-      // Convert to SVGuitar's string numbering (1-based, high E = 1)
-      const svguitarString = numStrings - stringIndex; // Flip the order
-      const svguitarFret = fretIndex + startingFret;
-      
+    if (fretIndex >= 1 && fretIndex <= numFrets) {
+      const svguitarFret = fretIndex;
       console.log('SVGuitar coordinates:', { svguitarString, svguitarFret });
       toggleFinger(svguitarString, svguitarFret);
     }
@@ -123,10 +158,33 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
 
   const toggleFinger = (string, fret) => {
     console.log('toggleFinger called with:', { string, fret });
+    
+    // Remove any nut markers when adding a finger position
+    setOpenStrings(prev => {
+      const next = new Set(prev);
+      next.delete(string);
+      return next;
+    });
+    setMutedStrings(prev => {
+      const next = new Set(prev);
+      next.delete(string);
+      return next;
+    });
+    
     setFingers(prev => {
       console.log('Current fingers:', prev);
-      const existingIndex = prev.findIndex(([s, f]) => s === string && f === fret);
+      console.log('Current fingers detailed:', JSON.stringify(prev));
+      console.log('Looking for exact match:', [string, fret]);
+      const existingIndex = prev.findIndex((finger, index) => {
+        console.log(`Index ${index}: comparing finger`, finger, 'with target', [string, fret]);
+        const [s, f] = finger;
+        console.log(`Extracted [${s}, ${f}] (types: ${typeof s}, ${typeof f}) vs [${string}, ${fret}] (types: ${typeof string}, ${typeof fret})`);
+        const matches = s === string && f === fret;
+        console.log('Match result:', matches);
+        return matches;
+      });
       console.log('Existing index:', existingIndex);
+      console.log('Checking condition: existingIndex >= 0 =', existingIndex >= 0);
       
       if (existingIndex >= 0) {
         // Remove existing finger
@@ -140,6 +198,34 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         return newFingers;
       }
     });
+  };
+
+  const toggleNutMarker = (stringNum) => {
+    const isOpen = openStrings.has(stringNum);
+    const isMuted = mutedStrings.has(stringNum);
+    
+    // Remove any fretted notes on this string when adding nut markers
+    setFingers(prev => prev.filter(([s]) => s !== stringNum));
+    
+    if (!isOpen && !isMuted) {
+      // State: none → open
+      setOpenStrings(prev => new Set([...prev, stringNum]));
+    } else if (isOpen) {
+      // State: open → muted
+      setOpenStrings(prev => {
+        const next = new Set(prev);
+        next.delete(stringNum);
+        return next;
+      });
+      setMutedStrings(prev => new Set([...prev, stringNum]));
+    } else if (isMuted) {
+      // State: muted → none
+      setMutedStrings(prev => {
+        const next = new Set(prev);
+        next.delete(stringNum);
+        return next;
+      });
+    }
   };
 
   const updateCharts = () => {
@@ -158,12 +244,30 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         tuning: []  // Empty array to hide SVGuitar's built-in tuning labels
       };
 
+      // Combine regular fingers with open and muted strings
+      const allFingers = [
+        ...fingers,
+        // Add open strings as [string, 0]
+        ...Array.from(openStrings).map(string => [string, 0]),
+        // Add muted strings as [string, 'x']
+        ...Array.from(mutedStrings).map(string => [string, 'x'])
+      ];
+
       const chordData = {
-        fingers,
+        fingers: allFingers,
         barres
       };
 
       console.log('Drawing charts with config:', config, 'chordData:', chordData);
+      console.log('Fingers being sent to SVGuitar:', fingers);
+
+      // Clear previous charts by recreating the chart instances
+      // SVGuitar doesn't have a clear() method, so we need to recreate the instances
+      document.querySelector('#editor-chart').innerHTML = '';
+      document.querySelector('#result-chart').innerHTML = '';
+      
+      editorChartRef.current = new window.svguitar.SVGuitarChord('#editor-chart');
+      resultChartRef.current = new window.svguitar.SVGuitarChord('#result-chart');
 
       editorChartRef.current
         .configure(config)
@@ -188,15 +292,15 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         if (editorSvg) {
           editorSvg.style.width = '100%';
           editorSvg.style.height = '100%';
-          editorSvg.style.maxWidth = '160px';
-          editorSvg.style.maxHeight = '240px';
+          editorSvg.style.maxWidth = '208px';  // Match container width w-52
+          editorSvg.style.maxHeight = '320px'; // Match container height h-80
         }
         
         if (resultSvg) {
           resultSvg.style.width = '100%';
           resultSvg.style.height = '100%';
-          resultSvg.style.maxWidth = '160px';
-          resultSvg.style.maxHeight = '240px';
+          resultSvg.style.maxWidth = '208px';  // Match container width w-52
+          resultSvg.style.maxHeight = '320px'; // Match container height h-80
         }
         
         setupEditorInteraction();
@@ -208,7 +312,7 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
 
   useEffect(() => {
     updateCharts();
-  }, [title, startingFret, numFrets, numStrings, fingers, barres, tuning]);
+  }, [title, startingFret, numFrets, numStrings, fingers, barres, tuning, openStrings, mutedStrings]);
 
   return (
     <div className="bg-gray-800 rounded-lg p-4">
@@ -216,11 +320,11 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         {/* Basic settings in a row */}
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <div className="text-sm text-blue-400 mb-1">Title</div>
+            <div className="text-sm text-blue-400 mb-1">Chord Name</div>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Enter title"
+              placeholder="Enter chord name"
               className="bg-gray-900"
             />
           </div>
@@ -293,11 +397,7 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
           <div>
             <div className="text-lg font-serif mb-4">Editor</div>
             <div className="border border-gray-700 rounded-lg p-4">
-              {/* Tuning letters above the chart */}
-              <div className="w-40 mx-auto text-center mb-1 text-gray-400 text-xs tracking-widest">
-                {tuning.split('').join(' ')}
-              </div>
-              <div className="relative w-40 h-60 mx-auto flex items-center justify-center overflow-hidden">
+              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden">
                 <div id="editor-chart" ref={editorContainerRef} className="cursor-pointer" />
               </div>
             </div>
@@ -306,16 +406,13 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
           <div>
             <div className="text-lg font-serif mb-4">Result</div>
             <div className="border border-gray-700 rounded-lg p-4">
-              {/* Tuning letters above the chart */}
-              <div className="w-40 mx-auto text-center mb-1 text-gray-400 text-xs tracking-widest">
-                {tuning.split('').join(' ')}
-              </div>
-              <div className="relative w-40 h-60 mx-auto flex items-center justify-center overflow-hidden">
+              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden">
                 <div id="result-chart" />
               </div>
             </div>
           </div>
         </div>
+
 
         {/* Edit mode buttons */}
         <div className="flex gap-2">
@@ -337,17 +434,22 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
 
         {/* Save button */}
         <Button 
-          onClick={() => onSave({ 
-            title, 
-            startingFret, 
-            numFrets, 
-            numStrings, 
-            tuning, 
-            capo, 
-            fingers, 
-            barres 
-          })} 
-          className="w-full bg-blue-600 hover:bg-blue-700"
+          onClick={() => {
+            console.log('Saving chord chart with title:', title);
+            onSave({ 
+              title, 
+              startingFret, 
+              numFrets, 
+              numStrings, 
+              tuning, 
+              capo, 
+              fingers, 
+              barres,
+              openStrings: Array.from(openStrings),
+              mutedStrings: Array.from(mutedStrings)
+            });
+          }} 
+          className={`w-full ${title.trim() ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
           disabled={!title.trim()}
         >
           Add Chord Chart
