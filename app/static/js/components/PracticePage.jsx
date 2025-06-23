@@ -411,6 +411,13 @@ export const PracticePage = () => {
     if (!window.svguitar || !container) return;
 
     try {
+      // Debug logging
+      console.log('Rendering saved chord:', chartData.title, {
+        fingers: chartData.fingers,
+        openStrings: chartData.openStrings,
+        mutedStrings: chartData.mutedStrings
+      });
+
       // Clear any existing content
       container.innerHTML = '';
 
@@ -456,6 +463,8 @@ export const PracticePage = () => {
         svg.style.height = '100%';
         svg.style.maxWidth = '150px';  // Smaller than editor for 4-column grid
         svg.style.maxHeight = '180px'; // Proportional height
+        svg.style.position = 'relative'; // Ensure SVG doesn't interfere with absolute positioning
+        svg.style.zIndex = '1'; // Keep SVG below the delete button
       }
     } catch (error) {
       console.error('Error rendering saved chord chart:', error);
@@ -1257,21 +1266,28 @@ export const PracticePage = () => {
                                     style={{
                                       minWidth: '0',
                                       maxWidth: '100%',
-                                      width: '100%'
+                                      width: '100%',
+                                      position: 'relative' // Ensure positioning context
                                     }}
                                   >
                                     {/* Delete button */}
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
+                                        console.log('Delete chord chart clicked:', chart.id);
                                         handleDeleteChordChart(routineItem.details?.A, chart.id);
                                       }}
-                                      className="absolute bottom-2 right-2 w-4 h-4 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                                      className="absolute bottom-1 right-1 w-6 h-6 text-red-500 hover:text-red-700 flex items-center justify-center text-lg font-black transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
                                       title="Delete chord chart"
+                                      style={{
+                                        position: 'absolute',
+                                        bottom: '4px',
+                                        right: '4px',
+                                        zIndex: 20
+                                      }}
                                     >
                                       ×
                                     </button>
-                                    <div className="text-sm font-semibold mb-2 text-center text-gray-300">{chart.title}</div>
                                     <div className="relative w-full h-32 mx-auto flex items-center justify-center overflow-hidden">
                                       <div 
                                         id={`saved-chord-chart-${routineItem.details?.A}-${chart.id}`} 
@@ -1286,6 +1302,7 @@ export const PracticePage = () => {
                                         {/* SVGuitar chart will be rendered here */}
                                       </div>
                                     </div>
+                                    <div className="text-sm font-semibold mt-2 text-center text-gray-300">{chart.title}</div>
                                   </div>
                                 ))}
                               </div>

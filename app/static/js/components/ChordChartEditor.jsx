@@ -435,7 +435,11 @@ export const ChordChartEditor = ({ onSave, defaultTuning = 'EADGBE' }) => {
         {/* Save button */}
         <Button 
           onClick={() => {
-            console.log('Saving chord chart with title:', title);
+            console.log('Saving chord chart with title:', title, {
+              openStrings: Array.from(openStrings),
+              mutedStrings: Array.from(mutedStrings),
+              fingers
+            });
             onSave({ 
               title, 
               startingFret, 

@@ -944,6 +944,8 @@ def add_chord_chart(item_id, chord_data):
             'startingFret': chord_data.get('startingFret', 1),
             'numFrets': chord_data.get('numFrets', 5),
             'numStrings': chord_data.get('numStrings', 6),
+            'openStrings': chord_data.get('openStrings', []),
+            'mutedStrings': chord_data.get('mutedStrings', []),
             # Section metadata for chord organization
             'sectionId': chord_data.get('sectionId', None),
             'sectionLabel': chord_data.get('sectionLabel', ''),
