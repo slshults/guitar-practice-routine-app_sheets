@@ -1,4 +1,17 @@
 import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+
+// Simple debounce function
+const debounce = (func, wait) => {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+};
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
@@ -70,32 +83,419 @@ export const PracticePage = () => {
   const [chordCharts, setChordCharts] = useState({});
   const [showChordEditor, setShowChordEditor] = useState({});
 
-  // Add some test chord charts for development
-  useEffect(() => {
-    if (routine?.items?.length > 0) {
-      const firstItemId = routine.items[0]['A'];
+  // Section management state
+  const [chordSections, setChordSections] = useState({});
+
+  // Helper function to group chords into sections based on persisted metadata
+  const getChordSections = (itemId) => {
+    const charts = chordCharts[itemId] || [];
+    
+    console.log(`[DEBUG] getChordSections for item ${itemId}:`, charts);
+    
+    if (charts.length === 0) {
+      return [];
+    }
+    
+    // Group chords by their section metadata
+    const sectionMap = new Map();
+    
+    charts.forEach(chart => {
+      const sectionId = chart.sectionId || 'section-1';
+      const sectionLabel = chart.sectionLabel || 'Verse';
+      const sectionRepeatCount = chart.sectionRepeatCount || '';
+      
+      console.log(`[DEBUG] Processing chord ${chart.id} (${chart.title}) for section ${sectionId}`, {
+        chordSectionId: chart.sectionId, 
+        chordSectionLabel: chart.sectionLabel,
+        fallbackUsed: !chart.sectionId
+      });
+      
+      if (!sectionMap.has(sectionId)) {
+        sectionMap.set(sectionId, {
+          id: sectionId,
+          label: sectionLabel,
+          repeatCount: sectionRepeatCount,
+          chords: []
+        });
+      }
+      
+      sectionMap.get(sectionId).chords.push(chart);
+    });
+    
+    // Convert map to array and sort by section creation order
+    const sections = Array.from(sectionMap.values());
+    
+    console.log(`[DEBUG] Final sections for item ${itemId}:`, sections);
+    
+    return sections;
+  };
+
+  // Combined function to get both persisted and temporary sections
+  const getAllSections = (itemId) => {
+    const persistedSections = getChordSections(itemId);
+    const tempSections = chordSections[itemId] || [];
+    
+    console.log(`[DEBUG] getAllSections for ${itemId} - persistedSections:`, persistedSections);
+    console.log(`[DEBUG] getAllSections for ${itemId} - tempSections:`, tempSections);
+    
+    // Create a map of all sections
+    const allSectionsMap = new Map();
+    
+    // Add persisted sections first
+    persistedSections.forEach(section => {
+      console.log(`[DEBUG] Adding persisted section ${section.id}:`, section);
+      allSectionsMap.set(section.id, section);
+    });
+    
+    // Only add temporary sections that don't exist in persisted sections
+    tempSections.forEach(section => {
+      if (!allSectionsMap.has(section.id)) {
+        console.log(`[DEBUG] Adding temp section ${section.id}:`, section);
+        allSectionsMap.set(section.id, section);
+      } else {
+        console.log(`[DEBUG] Skipping temp section ${section.id} (already exists)`);
+      }
+    });
+    
+    const result = Array.from(allSectionsMap.values());
+    console.log(`[DEBUG] getAllSections final result for ${itemId}:`, result);
+    return result;
+  };
+
+  // Function to add a new section
+  const addNewSection = (itemId, label = 'New Section') => {
+    console.log('Adding new section for item:', itemId, 'with label:', label);
+    
+    const newSection = {
+      id: `section-${Date.now()}`,
+      label,
+      repeatCount: '',
+      chords: []
+    };
+    
+    setChordSections(prev => {
+      const updated = {
+        ...prev,
+        [itemId]: [...(prev[itemId] || []), newSection]
+      };
+      console.log('Updated chordSections:', updated);
+      return updated;
+    });
+  };
+
+  // Function to update section label or repeat count
+  const updateSection = async (itemId, sectionId, updates) => {
+    console.log('Updating section:', sectionId, updates);
+    
+    // Update the section in local state
+    setChordSections(prev => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).map(section =>
+        section.id === sectionId ? { ...section, ...updates } : section
+      )
+    }));
+    
+    // Get all chord charts for this section that need to be updated
+    const chartsToUpdate = (chordCharts[itemId] || []).filter(chart => 
+      (chart.sectionId || 'section-1') === sectionId
+    );
+    
+    // Update each chord chart in the backend
+    const updatePromises = chartsToUpdate.map(chart => {
+      const updateData = {};
+      if (updates.label !== undefined) {
+        updateData.sectionLabel = updates.label;
+      }
+      if (updates.repeatCount !== undefined) {
+        updateData.sectionRepeatCount = updates.repeatCount;
+      }
+      
+      return fetch(`/api/chord-charts/${chart.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData)
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to update chord chart ${chart.id}`);
+        }
+        return response.json();
+      });
+    });
+    
+    try {
+      await Promise.all(updatePromises);
+      console.log(`Successfully updated ${chartsToUpdate.length} chord charts for section ${sectionId}`);
+      
+      // Update the chord charts in local state with the persisted changes
       setChordCharts(prev => ({
         ...prev,
-        [firstItemId]: [
-          {
-            id: 'test1',
-            chordName: 'C',
-            section: 'Verse',
-            tuning: 'EADGBE',
-            position: 1,
-            fretPositions: [0, 1, 0, 2, 3, 0]
-          },
-          {
-            id: 'test2', 
-            chordName: 'G',
-            section: 'Chorus',
-            tuning: 'EADGBE',
-            position: 3,
-            fretPositions: [3, 2, 0, 0, 3, 3]
+        [itemId]: (prev[itemId] || []).map(chart => {
+          if ((chart.sectionId || 'section-1') === sectionId) {
+            return {
+              ...chart,
+              sectionLabel: updates.label !== undefined ? updates.label : chart.sectionLabel,
+              sectionRepeatCount: updates.repeatCount !== undefined ? updates.repeatCount : chart.sectionRepeatCount
+            };
           }
-        ]
+          return chart;
+        })
       }));
+      
+    } catch (error) {
+      console.error('Error updating section in backend:', error);
+      // Could show a toast notification here
     }
+  };
+
+  // Debounced version of updateSection for real-time typing
+  const debouncedUpdateSection = useCallback(
+    debounce(async (itemId, sectionId, updates) => {
+      console.log('Debounced section update:', sectionId, updates);
+      
+      try {
+        // Fetch fresh chord charts from the backend to avoid stale state issues
+        const response = await fetch(`/api/items/${itemId}/chord-charts`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch chord charts for item ${itemId}`);
+        }
+        const freshCharts = await response.json();
+        
+        console.log(`[DEBUG] Fresh charts for item ${itemId}:`, freshCharts.map(c => ({
+          id: c.id, 
+          title: c.title, 
+          sectionId: c.sectionId || 'default-section'
+        })));
+        
+        // Get all chord charts for this section that need to be updated
+        const chartsToUpdate = freshCharts.filter(chart => 
+          (chart.sectionId || 'section-1') === sectionId
+        );
+        
+        if (chartsToUpdate.length === 0) {
+          console.log(`No chord charts to update for section: ${sectionId}. This might be a new section without any chord charts yet.`);
+          return;
+        }
+        
+        console.log(`Updating ${chartsToUpdate.length} chord charts for section ${sectionId}:`, chartsToUpdate.map(c => c.id));
+        
+        // Update each chord chart in the backend
+        const updatePromises = chartsToUpdate.map(chart => {
+          const updateData = {};
+          if (updates.label !== undefined) {
+            updateData.sectionLabel = updates.label;
+          }
+          if (updates.repeatCount !== undefined) {
+            updateData.sectionRepeatCount = updates.repeatCount;
+          }
+          
+          console.log(`Updating chord chart ${chart.id} with:`, updateData);
+          
+          return fetch(`/api/chord-charts/${chart.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updateData)
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to update chord chart ${chart.id}: ${response.status} ${response.statusText}`);
+            }
+            return response.json();
+          });
+        });
+        
+        await Promise.all(updatePromises);
+        console.log(`Successfully persisted ${chartsToUpdate.length} chord charts for section ${sectionId}`);
+        
+      } catch (error) {
+        console.error('Error persisting section updates:', error);
+      }
+    }, 500), // 500ms delay
+    [] // Remove chordCharts dependency to avoid stale closures
+  );
+
+  // Fast local-only section update for immediate UI feedback
+  const updateSectionLocal = (itemId, sectionId, updates) => {
+    // Update the section in local state immediately
+    setChordSections(prev => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).map(section =>
+        section.id === sectionId ? { ...section, ...updates } : section
+      )
+    }));
+    
+    // Update chord charts in local state immediately
+    setChordCharts(prev => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).map(chart => {
+        if ((chart.sectionId || 'section-1') === sectionId) {
+          return {
+            ...chart,
+            sectionLabel: updates.label !== undefined ? updates.label : chart.sectionLabel,
+            sectionRepeatCount: updates.repeatCount !== undefined ? updates.repeatCount : chart.sectionRepeatCount
+          };
+        }
+        return chart;
+      })
+    }));
+    
+    // Debounce the backend update
+    debouncedUpdateSection(itemId, sectionId, updates);
+  };
+
+  // Function to delete a section
+  const deleteSection = async (itemId, sectionId) => {
+    try {
+      // Get all chord charts in this section
+      const chartsToDelete = (chordCharts[itemId] || []).filter(chart => 
+        (chart.sectionId || 'section-1') === sectionId
+      );
+      
+      console.log(`Attempting to delete ${chartsToDelete.length} chord charts from section ${sectionId}:`, chartsToDelete.map(c => c.id));
+      
+      // Delete each chord chart from the backend, handling errors individually
+      const deleteResults = await Promise.allSettled(
+        chartsToDelete.map(async chart => {
+          try {
+            const response = await fetch(`/api/chord-charts/${chart.id}`, { method: 'DELETE' });
+            if (!response.ok) {
+              // Check if it's a 404 (not found) - this is recoverable
+              if (response.status === 404) {
+                console.warn(`Chord chart ${chart.id} not found in database (already deleted?)`);
+                return { success: true, id: chart.id, reason: 'not_found' };
+              }
+              throw new Error(`HTTP ${response.status}: Failed to delete chord chart ${chart.id}`);
+            }
+            return { success: true, id: chart.id };
+          } catch (error) {
+            console.error(`Error deleting chord chart ${chart.id}:`, error);
+            throw error;
+          }
+        })
+      );
+      
+      // Check results
+      const failures = deleteResults.filter(result => result.status === 'rejected');
+      if (failures.length > 0) {
+        console.error(`Failed to delete ${failures.length} chord charts:`, failures);
+      }
+      
+      const successes = deleteResults.filter(result => result.status === 'fulfilled').length;
+      console.log(`Successfully processed ${successes}/${chartsToDelete.length} chord chart deletions`);
+      
+      // Always update local state regardless of some failures (optimistic update)
+      // Remove chord charts from local state
+      setChordCharts(prev => ({
+        ...prev,
+        [itemId]: (prev[itemId] || []).filter(chart => 
+          (chart.sectionId || 'section-1') !== sectionId
+        )
+      }));
+      
+      // Remove section from local state
+      setChordSections(prev => ({
+        ...prev,
+        [itemId]: (prev[itemId] || []).filter(section => section.id !== sectionId)
+      }));
+      
+      // Only throw if all deletions failed
+      if (failures.length === chartsToDelete.length && chartsToDelete.length > 0) {
+        throw new Error(`All chord chart deletions failed`);
+      }
+      
+    } catch (error) {
+      console.error('Error deleting section:', error);
+    }
+  };
+
+  // Function to render saved chord charts using SVGuitar
+  const renderSavedChordChart = (chartData, container) => {
+    if (!window.svguitar || !container) return;
+
+    try {
+      // Clear any existing content
+      container.innerHTML = '';
+
+      // Create SVGuitar instance
+      const chart = new window.svguitar.SVGuitarChord(container);
+      
+      // Configure the chart
+      const config = {
+        strings: chartData.numStrings || 6,
+        frets: chartData.numFrets || 5,
+        position: chartData.startingFret || 1,
+        tuning: [], // Hide tuning labels in the small display
+        width: 150,
+        height: 180,
+        fretSize: 1.0,
+        fingerSize: 0.6,
+        sidePadding: 0.1,
+        fontFamily: 'Arial'
+      };
+
+      // Combine regular fingers with open and muted strings (same as in editor)
+      const allFingers = [
+        ...(chartData.fingers || []),
+        // Add open strings as [string, 0]
+        ...(chartData.openStrings || []).map(string => [string, 0]),
+        // Add muted strings as [string, 'x']
+        ...(chartData.mutedStrings || []).map(string => [string, 'x'])
+      ];
+
+      // Prepare chord data
+      const chord = {
+        fingers: allFingers,
+        barres: chartData.barres || []
+      };
+
+      // Render the chart
+      chart.configure(config).chord(chord).draw();
+
+      // Style the SVG to fit the container
+      const svg = container.querySelector('svg');
+      if (svg) {
+        svg.style.width = '100%';
+        svg.style.height = '100%';
+        svg.style.maxWidth = '150px';  // Smaller than editor for 4-column grid
+        svg.style.maxHeight = '180px'; // Proportional height
+      }
+    } catch (error) {
+      console.error('Error rendering saved chord chart:', error);
+    }
+  };
+
+  // Load chord charts from API when routine changes
+  useEffect(() => {
+    const loadChordCharts = async () => {
+      if (!routine?.items?.length) return;
+      
+      try {
+        const chartPromises = routine.items.map(async (item) => {
+          const itemId = item.details?.A;
+          if (!itemId) return null;
+          
+          const response = await fetch(`/api/items/${itemId}/chord-charts`);
+          if (response.ok) {
+            const charts = await response.json();
+            return { itemId, charts };
+          }
+          return null;
+        });
+
+        const results = await Promise.all(chartPromises);
+        const chartsByItem = {};
+        
+        results.forEach(result => {
+          if (result) {
+            chartsByItem[result.itemId] = result.charts;
+          }
+        });
+
+        setChordCharts(chartsByItem);
+      } catch (error) {
+        console.error('Error loading chord charts:', error);
+      }
+    };
+
+    loadChordCharts();
   }, [routine]);
   
   const completedItemIds = useMemo(() => {
@@ -508,19 +908,147 @@ export const PracticePage = () => {
     });
   };
 
-  const handleSaveChordChart = (itemId, chartData) => {
-    setChordCharts(prev => {
-      const itemCharts = prev[itemId] || [];
-      return {
-        ...prev,
-        [itemId]: [...itemCharts, { ...chartData, id: Date.now() }]
+  const handleSaveChordChart = async (itemId, chartData) => {
+    try {
+      console.log('Saving chord chart for item:', itemId, 'with data:', chartData);
+      
+      // Determine target section (use last section, or create default)
+      const itemSections = getAllSections(itemId);
+      let targetSection;
+      
+      console.log(`[DEBUG] Available sections for item ${itemId}:`, itemSections);
+      console.log(`[DEBUG] Current chordCharts state for item ${itemId}:`, chordCharts[itemId]);
+      console.log(`[DEBUG] Current chordSections state for item ${itemId}:`, chordSections[itemId]);
+      
+      if (itemSections.length === 0) {
+        // No sections exist, create default
+        targetSection = {
+          id: 'section-1',
+          label: 'Verse',
+          repeatCount: ''
+        };
+      } else {
+        // Use the last section
+        targetSection = itemSections[itemSections.length - 1];
+      }
+      
+      console.log(`[DEBUG] Target section for new chord:`, targetSection);
+      
+      // Add section metadata to chord data
+      const chartDataWithSection = {
+        ...chartData,
+        sectionId: targetSection.id,
+        sectionLabel: targetSection.label,
+        sectionRepeatCount: targetSection.repeatCount
       };
-    });
-    // Hide the editor after saving
-    setShowChordEditor(prev => ({
-      ...prev,
-      [itemId]: false
-    }));
+      
+      console.log(`[DEBUG] Chord data with section metadata:`, chartDataWithSection);
+      
+      const response = await fetch(`/api/items/${itemId}/chord-charts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(chartDataWithSection)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save chord chart: ${response.statusText}`);
+      }
+
+      const savedChart = await response.json();
+      console.log('Chord chart saved successfully:', savedChart);
+
+      // Update local state with the saved chart
+      setChordCharts(prev => {
+        const itemCharts = prev[itemId] || [];
+        return {
+          ...prev,
+          [itemId]: [...itemCharts, savedChart]
+        };
+      });
+
+      // Also add to the current section (or create a default section if none exists)
+      setChordSections(prev => {
+        const itemSections = prev[itemId] || [];
+        
+        // If no sections exist, create a default one
+        if (itemSections.length === 0) {
+          return {
+            ...prev,
+            [itemId]: [{
+              id: 'section-1',
+              label: 'Verse',
+              repeatCount: '',
+              chords: [savedChart]
+            }]
+          };
+        }
+        
+        // Add to the last section
+        const updatedSections = [...itemSections];
+        const lastSection = updatedSections[updatedSections.length - 1];
+        lastSection.chords = [...lastSection.chords, savedChart];
+        
+        return {
+          ...prev,
+          [itemId]: updatedSections
+        };
+      });
+
+      // Hide the editor after saving
+      setShowChordEditor(prev => ({
+        ...prev,
+        [itemId]: false
+      }));
+
+    } catch (error) {
+      console.error('Error saving chord chart:', error);
+      // TODO: Add user-visible error handling
+    }
+  };
+
+  const handleDeleteChordChart = async (itemId, chordId) => {
+    try {
+      console.log('Deleting chord chart:', chordId, 'for item:', itemId);
+      
+      const response = await fetch(`/api/chord-charts/${chordId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete chord chart: ${response.statusText}`);
+      }
+
+      console.log('Chord chart deleted successfully');
+
+      // Update local state by removing the chart
+      setChordCharts(prev => {
+        const itemCharts = prev[itemId] || [];
+        return {
+          ...prev,
+          [itemId]: itemCharts.filter(chart => chart.id !== chordId)
+        };
+      });
+
+      // Also remove from sections
+      setChordSections(prev => {
+        const itemSections = prev[itemId] || [];
+        const updatedSections = itemSections.map(section => ({
+          ...section,
+          chords: section.chords.filter(chart => chart.id !== chordId)
+        }));
+        
+        return {
+          ...prev,
+          [itemId]: updatedSections
+        };
+      });
+
+    } catch (error) {
+      console.error('Error deleting chord chart:', error);
+      // TODO: Add user-visible error handling
+    }
   };
 
   const toggleChordEditor = (itemId, e) => {
@@ -673,49 +1201,122 @@ export const PracticePage = () => {
                     {/* Collapsible chord chart content */}
                     {isChordsExpanded && (
                       <div className="bg-gray-700 rounded-lg p-4">
-                        {/* Display existing chord charts */}
-                        {chordCharts[routineItem['A']]?.length > 0 && (
-                          <div className="mb-4 space-y-4">
-                            {Object.entries(
-                              chordCharts[routineItem['A']]?.reduce((acc, chart) => {
-                                if (!acc[chart.section]) acc[chart.section] = [];
-                                acc[chart.section].push(chart);
-                                return acc;
-                              }, {}) || {}
-                            ).map(([section, charts]) => (
-                              <div key={section} className="space-y-2">
-                                <h4 className="text-lg font-semibold text-gray-300">{section}</h4>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                  {charts.map(chart => (
-                                    <div key={chart.id} className="bg-gray-800 p-2 rounded">
-                                      <div className="text-sm font-mono mb-2">{chart.chordName}</div>
-                                      <div className="relative w-20 h-24 mx-auto">
-                                        <div id={`chord-chart-${routineItem['A']}-${chart.id}`} className="absolute inset-0">
-                                          {/* SVGuitar chart will be rendered here */}
-                                        </div>
+                        {/* Display chord sections */}
+                        {getAllSections(routineItem.details?.A).map(section => {
+                          console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
+                          return (
+                          <div key={section.id} className="mb-6">
+                            {/* Section header with label and repeat count */}
+                            <div className="flex justify-between items-center mb-3">
+                              {/* Section label (top-left) */}
+                              <input
+                                type="text"
+                                value={section.label}
+                                onChange={(e) => {
+                                  console.log('Updating section label:', section.id, e.target.value);
+                                  updateSectionLocal(routineItem.details?.A, section.id, { label: e.target.value });
+                                }}
+                                className="bg-gray-600 text-white px-2 py-1 rounded text-sm font-semibold"
+                                placeholder="Section name"
+                              />
+                              
+                              {/* Repeat count and section delete */}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={section.repeatCount}
+                                  onChange={(e) => updateSectionLocal(routineItem.details?.A, section.id, { repeatCount: e.target.value })}
+                                  className="bg-gray-600 text-white px-2 py-1 rounded text-sm w-6 text-center"
+                                  placeholder="x2"
+                                  maxLength="3"
+                                />
+                                <button
+                                  onClick={() => deleteSection(routineItem.details?.A, section.id)}
+                                  className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                                  title="Delete section"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Chord grid for this section */}
+                            {section.chords.length > 0 && (
+                              <div 
+                                className="grid grid-cols-4 gap-4" 
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(4, 1fr)',
+                                  gap: '1rem'
+                                }}
+                              >
+                                {section.chords.map(chart => (
+                                  <div 
+                                    key={chart.id} 
+                                    className="bg-gray-800 p-3 rounded-lg relative" 
+                                    style={{
+                                      minWidth: '0',
+                                      maxWidth: '100%',
+                                      width: '100%'
+                                    }}
+                                  >
+                                    {/* Delete button */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteChordChart(routineItem.details?.A, chart.id);
+                                      }}
+                                      className="absolute bottom-2 right-2 w-4 h-4 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+                                      title="Delete chord chart"
+                                    >
+                                      ×
+                                    </button>
+                                    <div className="text-sm font-semibold mb-2 text-center text-gray-300">{chart.title}</div>
+                                    <div className="relative w-full h-32 mx-auto flex items-center justify-center overflow-hidden">
+                                      <div 
+                                        id={`saved-chord-chart-${routineItem.details?.A}-${chart.id}`} 
+                                        className="w-full h-full"
+                                        ref={el => {
+                                          if (el && !el.querySelector('svg')) {
+                                            // Render the saved chord chart using SVGuitar
+                                            setTimeout(() => renderSavedChordChart(chart, el), 100);
+                                          }
+                                        }}
+                                      >
+                                        {/* SVGuitar chart will be rendered here */}
                                       </div>
                                     </div>
-                                  ))}
-                                </div>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
+                            )}
                           </div>
-                        )}
+                          );
+                        })}
 
+                        {/* Add new section button */}
                         {/* Toggle for chord editor */}
                         <Button
                           variant="outline"
-                          onClick={(e) => toggleChordEditor(routineItem['A'], e)}
+                          onClick={(e) => toggleChordEditor(routineItem.details?.A, e)}
                           className="w-full mb-4"
                         >
-                          {showChordEditor[routineItem['A']] ? 'Hide Chord Editor' : 'Add New Chord'}
+                          {showChordEditor[routineItem.details?.A] ? 'Hide Chord Editor' : 'Add New Chord'}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          onClick={() => addNewSection(routineItem.details?.A)}
+                          className="w-full mb-4 border-gray-600"
+                        >
+                          + Add New Section
                         </Button>
 
                         {/* Chord editor */}
-                        {showChordEditor[routineItem['A']] && (
+                        {showChordEditor[routineItem.details?.A] && (
                           <ChordChartEditor
-                            defaultTuning={routineItem.details?.['H'] || 'EADGBE'}
-                            onSave={(chartData) => handleSaveChordChart(routineItem['A'], chartData)}
+                            defaultTuning={routineItem.details?.H || 'EADGBE'}
+                            onSave={(chartData) => handleSaveChordChart(routineItem.details?.A, chartData)}
                           />
                         )}
                       </div>

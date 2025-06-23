@@ -15,6 +15,7 @@ logging.basicConfig(level=logging.DEBUG)
 ITEMS_COLUMNS = 8        # A through H (A=ID, B=Item ID, C=Title, D=Notes, E=Duration, F=Description, G=order, H=Tuning)
 ROUTINE_COLUMNS = 4      # A through D (A=ID, B=Item ID, C=order, D=completed)
 ROUTINES_COLUMNS = 4     # A through D
+CHORDCHARTS_COLUMNS = 6  # A through F (A=ChordID, B=ItemID, C=Title, D=ChordData, E=CreatedAt, F=Order)
 
 @lru_cache(maxsize=1)
 def get_credentials():
@@ -83,7 +84,12 @@ def sheet_to_records(worksheet, is_routine_worksheet=True):
     """
     try:
         # Get number of columns based on sheet type
-        num_columns = ROUTINE_COLUMNS if is_routine_worksheet else ITEMS_COLUMNS
+        if worksheet.title == 'ChordCharts':
+            num_columns = CHORDCHARTS_COLUMNS
+        elif is_routine_worksheet:
+            num_columns = ROUTINE_COLUMNS
+        else:
+            num_columns = ITEMS_COLUMNS
         
         # Get all values starting from row 2 (data rows only), up to the last needed column
         last_col = chr(ord('A') + num_columns - 1)
@@ -130,15 +136,23 @@ def records_to_sheet(worksheet, records, is_routine_worksheet=True):
         return True
         
     # Determine range based on worksheet type
-    num_cols = 4 if is_routine_worksheet else 8
-    col_end = 'D' if is_routine_worksheet else 'H'
+    if worksheet.title == 'ChordCharts':
+        num_cols = CHORDCHARTS_COLUMNS
+        col_end = 'F'
+    elif is_routine_worksheet:
+        num_cols = ROUTINE_COLUMNS
+        col_end = 'D'
+    else:
+        num_cols = ITEMS_COLUMNS
+        col_end = 'H'
     
     # Convert records to rows, preserving all columns
     rows = []
     for record in records:
         logging.debug(f"Processing record: {record}")
         row = []
-        for col in 'ABCDEFGH'[:num_cols]:  # Only process columns we need
+        for i in range(num_cols):
+            col = chr(ord('A') + i)
             row.append(record.get(col, ''))
         rows.append(row)
     
@@ -829,3 +843,256 @@ def get_worksheet(worksheet_name):
     except Exception as e:
         logging.error(f"Error getting worksheet {worksheet_name}: {str(e)}")
         raise
+
+# ChordCharts functions
+def initialize_chordcharts_sheet():
+    """Create and initialize the ChordCharts sheet if it doesn't exist."""
+    try:
+        spread = get_spread()
+        
+        # Check if ChordCharts sheet exists
+        try:
+            sheet = spread.worksheet('ChordCharts')
+            logging.debug("ChordCharts sheet already exists")
+            return True
+                
+        except:
+            logging.debug("Creating new ChordCharts sheet")
+            sheet = spread.add_worksheet('ChordCharts', rows=1000, cols=20)
+            
+            # Add header row
+            header_row = ['ChordID', 'ItemID', 'Title', 'ChordData', 'CreatedAt', 'Order']
+            sheet.update('A1:F1', [header_row])
+            return True
+            
+    except Exception as e:
+        logging.error(f"Error initializing ChordCharts sheet: {str(e)}")
+        raise
+
+def get_chord_charts_for_item(item_id):
+    """Get all chord charts for a specific item."""
+    try:
+        spread = get_spread()
+        
+        # Initialize sheet if it doesn't exist
+        initialize_chordcharts_sheet()
+        
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Filter by ItemID and sort by Order
+        item_charts = [r for r in records if r.get('B') == str(item_id)]  # Column B = ItemID
+        
+        # Sort by Order (column F)
+        item_charts.sort(key=lambda x: int(float(x.get('F', 0))))
+        
+        # Parse ChordData JSON for each chart
+        parsed_charts = []
+        for chart in item_charts:
+            try:
+                import json
+                chart_data = json.loads(chart.get('D', '{}'))  # Column D = ChordData
+                parsed_charts.append({
+                    'id': chart.get('A'),  # Column A = ChordID
+                    'itemId': chart.get('B'),  # Column B = ItemID
+                    'title': chart.get('C'),  # Column C = Title
+                    'createdAt': chart.get('E'),  # Column E = CreatedAt
+                    'order': chart.get('F'),  # Column F = Order
+                    **chart_data  # Spread the chord data (fingers, barres, tuning, etc.)
+                })
+            except json.JSONDecodeError:
+                logging.error(f"Invalid JSON in chord chart {chart.get('A')}")
+                continue
+                
+        return parsed_charts
+        
+    except Exception as e:
+        logging.error(f"Error getting chord charts for item {item_id}: {str(e)}")
+        return []
+
+def add_chord_chart(item_id, chord_data):
+    """Add a new chord chart for an item."""
+    try:
+        import json
+        spread = get_spread()
+        
+        # Initialize sheet if it doesn't exist
+        initialize_chordcharts_sheet()
+        
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Generate new ChordID
+        new_id = max([int(float(r.get('A', 0))) for r in records if r.get('A')], default=0) + 1
+        
+        # Get max order for this item
+        item_charts = [r for r in records if r.get('B') == str(item_id)]
+        max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
+        new_order = max_order + 1
+        
+        # Format timestamp
+        now = datetime.now()
+        timestamp = now.strftime('%Y-%m-%d %I:%M%p PST')
+        
+        # Extract title and chord data
+        title = chord_data.get('title', 'Untitled Chord')
+        chord_json = json.dumps({
+            'fingers': chord_data.get('fingers', []),
+            'barres': chord_data.get('barres', []),
+            'tuning': chord_data.get('tuning', 'EADGBE'),
+            'capo': chord_data.get('capo', 0),
+            'startingFret': chord_data.get('startingFret', 1),
+            'numFrets': chord_data.get('numFrets', 5),
+            'numStrings': chord_data.get('numStrings', 6),
+            # Section metadata for chord organization
+            'sectionId': chord_data.get('sectionId', None),
+            'sectionLabel': chord_data.get('sectionLabel', ''),
+            'sectionRepeatCount': chord_data.get('sectionRepeatCount', '')
+        })
+        
+        # Create new record
+        new_record = {
+            'A': str(new_id),      # ChordID
+            'B': str(item_id),     # ItemID
+            'C': title,            # Title
+            'D': chord_json,       # ChordData
+            'E': timestamp,        # CreatedAt
+            'F': str(new_order)    # Order
+        }
+        
+        # Add to records and save
+        records.append(new_record)
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        
+        if success:
+            invalidate_caches()
+            return {
+                'id': new_id,
+                'itemId': item_id,
+                'title': title,
+                'createdAt': timestamp,
+                'order': new_order,
+                **json.loads(chord_json)
+            }
+            
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error adding chord chart: {str(e)}")
+        raise ValueError(f"Failed to add chord chart: {str(e)}")
+
+def delete_chord_chart(chord_id):
+    """Delete a chord chart by ID."""
+    try:
+        spread = get_spread()
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Find and remove the chart
+        chart_to_delete = next((r for r in records if r.get('A') == str(chord_id)), None)
+        if not chart_to_delete:
+            raise ValueError(f"Chord chart {chord_id} not found")
+            
+        # Get the item_id and order of deleted chart
+        item_id = chart_to_delete.get('B')
+        deleted_order = int(float(chart_to_delete.get('F', 0)))
+        
+        # Remove the chart
+        records = [r for r in records if r.get('A') != str(chord_id)]
+        
+        # Update order for remaining charts of the same item
+        for record in records:
+            if record.get('B') == item_id:  # Same item
+                current_order = int(float(record.get('F', 0)))
+                if current_order > deleted_order:
+                    record['F'] = str(current_order - 1)
+        
+        # Save updated records
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        if success:
+            invalidate_caches()
+            
+        return success
+        
+    except ValueError as e:
+        # Re-raise ValueError so the route can handle it properly
+        logging.warning(f"Chord chart not found: {str(e)}")
+        raise
+    except Exception as e:
+        logging.error(f"Error deleting chord chart: {str(e)}")
+        return False
+
+def update_chord_chart(chord_id, chord_data):
+    """Update a chord chart by ID."""
+    try:
+        spread = get_spread()
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Find the chart to update
+        chart_to_update = next((r for r in records if r.get('A') == str(chord_id)), None)
+        if not chart_to_update:
+            raise ValueError(f"Chord chart {chord_id} not found")
+        
+        # Update the chord data (preserve existing fields not provided in update)
+        if 'title' in chord_data:
+            chart_to_update['C'] = chord_data['title']
+        
+        # Update the ChordData JSON field - merge with existing data
+        import json
+        try:
+            existing_chord_data = json.loads(chart_to_update.get('D', '{}'))
+        except json.JSONDecodeError:
+            existing_chord_data = {}
+        
+        # Merge chord_data into existing_chord_data
+        existing_chord_data.update(chord_data)
+        chart_to_update['D'] = json.dumps(existing_chord_data)
+        
+        # Save updated records
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        if success:
+            invalidate_caches()
+            # Return updated chart data
+            return {
+                'id': int(chart_to_update['A']),
+                'itemId': int(chart_to_update['B']),
+                'title': chart_to_update['C'],
+                'chordData': existing_chord_data,
+                'createdAt': chart_to_update['E'],
+                'order': int(float(chart_to_update['F']))
+            }
+            
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error updating chord chart: {str(e)}")
+        raise ValueError(f"Failed to update chord chart: {str(e)}")
+
+def update_chord_charts_order(item_id, chord_charts):
+    """Update the order of chord charts for an item."""
+    try:
+        spread = get_spread()
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Create a map of chord IDs to new orders
+        new_orders = {chart['id']: i for i, chart in enumerate(chord_charts)}
+        
+        # Update order for charts belonging to this item
+        for record in records:
+            chart_id = record.get('A')
+            if record.get('B') == str(item_id) and chart_id in new_orders:
+                record['F'] = str(new_orders[chart_id])
+        
+        # Save updated records
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        if success:
+            invalidate_caches()
+            return True
+            
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error updating chord charts order: {str(e)}")
+        return False

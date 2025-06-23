@@ -7,7 +7,8 @@ from app.sheets import ( # type: ignore
     create_routine, update_routine_order, update_routine_item,
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
     get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
-    records_to_sheet
+    records_to_sheet, get_chord_charts_for_item, add_chord_chart, 
+    delete_chord_chart, update_chord_chart, update_chord_charts_order
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -1032,4 +1033,94 @@ def update_songbook_paths():
 
     except Exception as e:
         app.logger.error(f"Error updating songbook paths: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+# Chord Charts API endpoints
+@app.route('/api/items/<int:item_id>/chord-charts', methods=['GET', 'POST'])
+def chord_charts_for_item(item_id):
+    """Get or create chord charts for an item."""
+    if request.method == 'GET':
+        try:
+            charts = get_chord_charts_for_item(item_id)
+            return jsonify(charts)
+        except Exception as e:
+            app.logger.error(f"Error getting chord charts for item {item_id}: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            if not request.is_json:
+                return jsonify({"error": "Request must be JSON"}), 400
+            
+            chord_data = request.json
+            app.logger.debug(f"Creating chord chart for item {item_id} with data: {chord_data}")
+            
+            result = add_chord_chart(item_id, chord_data)
+            if result:
+                return jsonify(result)
+            else:
+                return jsonify({"error": "Failed to create chord chart"}), 500
+                
+        except Exception as e:
+            app.logger.error(f"Error creating chord chart: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chord-charts/<int:chord_id>', methods=['DELETE'])
+def delete_chord_chart_route(chord_id):
+    """Delete a chord chart by ID."""
+    try:
+        success = delete_chord_chart(chord_id)
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Failed to delete chord chart'}), 500
+    except ValueError as e:
+        # Handle case where chord chart doesn't exist
+        if "not found" in str(e).lower():
+            app.logger.warning(f"Chord chart {chord_id} not found: {str(e)}")
+            return jsonify({'error': 'Chord chart not found'}), 404
+        else:
+            app.logger.error(f"ValueError deleting chord chart {chord_id}: {str(e)}")
+            return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Error deleting chord chart {chord_id}: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chord-charts/<int:chord_id>', methods=['PUT'])
+def update_chord_chart_route(chord_id):
+    """Update a chord chart by ID."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        chord_data = request.json
+        app.logger.debug(f"Updating chord chart {chord_id} with data: {chord_data}")
+        
+        result = update_chord_chart(chord_id, chord_data)
+        if result:
+            return jsonify(result)
+        else:
+            return jsonify({'error': 'Failed to update chord chart'}), 500
+    except Exception as e:
+        app.logger.error(f"Error updating chord chart {chord_id}: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/items/<int:item_id>/chord-charts/order', methods=['PUT'])
+def update_chord_charts_order_route(item_id):
+    """Update the order of chord charts for an item."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        chord_charts = request.json
+        app.logger.debug(f"Updating chord chart order for item {item_id}: {chord_charts}")
+        
+        success = update_chord_charts_order(item_id, chord_charts)
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Failed to update chord chart order'}), 500
+            
+    except Exception as e:
+        app.logger.error(f"Error updating chord chart order: {str(e)}")
         return jsonify({'error': str(e)}), 500
