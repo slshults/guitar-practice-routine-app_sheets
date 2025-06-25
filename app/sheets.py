@@ -7,9 +7,33 @@ import os
 import logging
 from datetime import datetime
 from functools import lru_cache
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
+
+def retry_on_rate_limit(func, max_retries=3, base_delay=1):
+    """
+    Retry a function on rate limit errors with exponential backoff.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = any(phrase in error_str for phrase in [
+                'quota exceeded', 'rate_limit_exceeded', 'too many requests'
+            ])
+            
+            if is_rate_limit and attempt < max_retries:
+                # Exponential backoff: 1s, 2s, 4s
+                delay = base_delay * (2 ** attempt)
+                logging.warning(f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(delay)
+                continue
+            else:
+                # Either not a rate limit error, or we've exhausted retries
+                raise
 
 # Define number of columns for each sheet type
 ITEMS_COLUMNS = 8        # A through H (A=ID, B=Item ID, C=Title, D=Notes, E=Duration, F=Description, G=order, H=Tuning)
@@ -474,7 +498,7 @@ def get_routine(routine_id):
         worksheet = spread.worksheet(str(routine_id))
         records = sheet_to_records(worksheet, is_routine_worksheet=True)
         return records
-    except Exception as e:
+    except Exception:
         raise ValueError(f"Routine with ID {routine_id} not found")
 
 def get_active_routine():
@@ -708,7 +732,7 @@ def delete_routine(routine_id):
             # If we got the worksheet, try to delete it
             spread.del_worksheet(worksheet)
             logging.debug(f"Successfully deleted worksheet for routine {routine_id_str}")
-        except gspread.exceptions.WorksheetNotFound as wnf:
+        except gspread.exceptions.WorksheetNotFound:
             logging.warning(f"Worksheet {routine_id_str} not found, continuing with routine deletion")
             # Continue even if worksheet doesn't exist - it might have been deleted previously
             pass
@@ -1023,6 +1047,94 @@ def delete_chord_chart(chord_id):
     except Exception as e:
         logging.error(f"Error deleting chord chart: {str(e)}")
         return False
+
+def batch_delete_chord_charts(chord_ids):
+    """Delete multiple chord charts by IDs in a single API transaction."""
+    if not chord_ids:
+        return {'success': True, 'deleted': [], 'not_found': [], 'failed': []}
+    
+    def do_batch_delete():
+        spread = get_spread()
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        return spread, sheet, records
+    
+    try:
+        # Apply retry logic to the entire operation, including initial data fetch
+        spread, sheet, records = retry_on_rate_limit(do_batch_delete)
+        
+        # Track results
+        deleted_ids = []
+        not_found_ids = []
+        failed_ids = []
+        
+        # Find charts to delete and track by item for order updates
+        charts_to_delete = []
+        items_affected = {}
+        
+        for chord_id in chord_ids:
+            chart_to_delete = next((r for r in records if r.get('A') == str(chord_id)), None)
+            if not chart_to_delete:
+                not_found_ids.append(chord_id)
+                continue
+                
+            charts_to_delete.append(chart_to_delete)
+            item_id = chart_to_delete.get('B')
+            deleted_order = int(float(chart_to_delete.get('F', 0)))
+            
+            if item_id not in items_affected:
+                items_affected[item_id] = []
+            items_affected[item_id].append(deleted_order)
+        
+        # Remove all charts to delete
+        records = [r for r in records if r.get('A') not in [str(cid) for cid in chord_ids]]
+        
+        # Update order for remaining charts in affected items
+        for item_id, deleted_orders in items_affected.items():
+            deleted_orders.sort()  # Sort to handle multiple deletions correctly
+            
+            for record in records:
+                if record.get('B') == item_id:  # Same item
+                    current_order = int(float(record.get('F', 0)))
+                    # Count how many deleted orders were below current order
+                    adjustments = sum(1 for deleted_order in deleted_orders if deleted_order < current_order)
+                    if adjustments > 0:
+                        record['F'] = str(current_order - adjustments)
+        
+        # Save updated records in one API call with retry logic
+        def save_with_retry():
+            return records_to_sheet(sheet, records, is_routine_worksheet=False)
+        
+        success = retry_on_rate_limit(save_with_retry)
+        
+        if success:
+            deleted_ids = [chart['A'] for chart in charts_to_delete]
+            logging.info(f"Batch deleted {len(deleted_ids)} chord charts: {deleted_ids}")
+            
+            # Aggressive cache clearing - clear multiple times with delay
+            invalidate_caches()
+            time.sleep(0.1)  # Small delay to ensure writes are committed
+            invalidate_caches()  # Clear again to be sure
+        else:
+            failed_ids = [chart['A'] for chart in charts_to_delete]
+            logging.error(f"Failed to save after batch delete")
+            
+        return {
+            'success': success,
+            'deleted': deleted_ids,
+            'not_found': not_found_ids,
+            'failed': failed_ids
+        }
+        
+    except Exception as e:
+        logging.error(f"Error in batch delete chord charts: {str(e)}")
+        return {
+            'success': False,
+            'deleted': [],
+            'not_found': [],
+            'failed': chord_ids,
+            'error': str(e)
+        }
 
 def update_chord_chart(chord_id, chord_data):
     """Update a chord chart by ID."""

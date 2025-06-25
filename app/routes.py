@@ -1042,7 +1042,12 @@ def chord_charts_for_item(item_id):
     if request.method == 'GET':
         try:
             charts = get_chord_charts_for_item(item_id)
-            return jsonify(charts)
+            response = jsonify(charts)
+            # Add anti-caching headers to prevent stale data
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
         except Exception as e:
             app.logger.error(f"Error getting chord charts for item {item_id}: {str(e)}")
             return jsonify({'error': str(e)}), 500
@@ -1075,15 +1080,57 @@ def delete_chord_chart_route(chord_id):
         else:
             return jsonify({'error': 'Failed to delete chord chart'}), 500
     except ValueError as e:
+        error_msg = str(e).lower()
         # Handle case where chord chart doesn't exist
-        if "not found" in str(e).lower():
+        if "not found" in error_msg:
             app.logger.warning(f"Chord chart {chord_id} not found: {str(e)}")
             return jsonify({'error': 'Chord chart not found'}), 404
+        # Handle rate limit errors specifically
+        elif "quota exceeded" in error_msg or "rate_limit_exceeded" in error_msg:
+            app.logger.warning(f"Rate limit exceeded deleting chord chart {chord_id}: {str(e)}")
+            return jsonify({
+                'error': 'Rate limit exceeded. Please try again in a moment.',
+                'retry_after': 60  # Suggest waiting 60 seconds
+            }), 429
         else:
             app.logger.error(f"ValueError deleting chord chart {chord_id}: {str(e)}")
             return jsonify({'error': str(e)}), 400
     except Exception as e:
         app.logger.error(f"Error deleting chord chart {chord_id}: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chord-charts/batch-delete', methods=['POST'])
+def batch_delete_chord_charts_route():
+    """Delete multiple chord charts by IDs in a single transaction."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        data = request.json
+        chord_ids = data.get('chord_ids', [])
+        
+        if not chord_ids:
+            return jsonify({"error": "No chord IDs provided"}), 400
+        
+        if not isinstance(chord_ids, list):
+            return jsonify({"error": "chord_ids must be an array"}), 400
+        
+        app.logger.info(f"Batch deleting chord charts: {chord_ids}")
+        
+        # Import the function from sheets module
+        from app.sheets import batch_delete_chord_charts
+        
+        result = batch_delete_chord_charts(chord_ids)
+        
+        if result['success']:
+            app.logger.info(f"Successfully batch deleted {len(result['deleted'])} chord charts")
+            return jsonify(result)
+        else:
+            app.logger.error(f"Batch delete failed: {result.get('error', 'Unknown error')}")
+            return jsonify(result), 500
+            
+    except Exception as e:
+        app.logger.error(f"Error in batch delete chord charts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/chord-charts/<int:chord_id>', methods=['PUT'])

@@ -85,6 +85,8 @@ export const PracticePage = () => {
 
   // Section management state
   const [chordSections, setChordSections] = useState({});
+  const [deletingSection, setDeletingSection] = useState(new Set());
+  const [editingChordId, setEditingChordId] = useState(null);
 
   // Helper function to group chords into sections based on persisted metadata
   const getChordSections = (itemId) => {
@@ -341,47 +343,73 @@ export const PracticePage = () => {
     debouncedUpdateSection(itemId, sectionId, updates);
   };
 
-  // Function to delete a section
+  // Function to delete a section using batch delete
   const deleteSection = async (itemId, sectionId) => {
+    // Prevent double-clicking/double-triggering
+    const sectionKey = `${itemId}-${sectionId}`;
+    if (deletingSection.has(sectionKey)) {
+      console.log(`Delete already in progress for section ${sectionId}`);
+      return;
+    }
+    
+    setDeletingSection(prev => new Set([...prev, sectionKey]));
+    
     try {
       // Get all chord charts in this section
       const chartsToDelete = (chordCharts[itemId] || []).filter(chart => 
         (chart.sectionId || 'section-1') === sectionId
       );
       
-      console.log(`Attempting to delete ${chartsToDelete.length} chord charts from section ${sectionId}:`, chartsToDelete.map(c => c.id));
-      
-      // Delete each chord chart from the backend, handling errors individually
-      const deleteResults = await Promise.allSettled(
-        chartsToDelete.map(async chart => {
-          try {
-            const response = await fetch(`/api/chord-charts/${chart.id}`, { method: 'DELETE' });
-            if (!response.ok) {
-              // Check if it's a 404 (not found) - this is recoverable
-              if (response.status === 404) {
-                console.warn(`Chord chart ${chart.id} not found in database (already deleted?)`);
-                return { success: true, id: chart.id, reason: 'not_found' };
-              }
-              throw new Error(`HTTP ${response.status}: Failed to delete chord chart ${chart.id}`);
-            }
-            return { success: true, id: chart.id };
-          } catch (error) {
-            console.error(`Error deleting chord chart ${chart.id}:`, error);
-            throw error;
-          }
-        })
-      );
-      
-      // Check results
-      const failures = deleteResults.filter(result => result.status === 'rejected');
-      if (failures.length > 0) {
-        console.error(`Failed to delete ${failures.length} chord charts:`, failures);
+      if (chartsToDelete.length === 0) {
+        console.log(`No chord charts to delete in section ${sectionId}`);
+        // Just remove the empty section from local state
+        setChordSections(prev => ({
+          ...prev,
+          [itemId]: (prev[itemId] || []).filter(section => section.id !== sectionId)
+        }));
+        return;
       }
       
-      const successes = deleteResults.filter(result => result.status === 'fulfilled').length;
-      console.log(`Successfully processed ${successes}/${chartsToDelete.length} chord chart deletions`);
+      const chordIds = chartsToDelete.map(chart => chart.id);
+      console.log(`Batch deleting ${chartsToDelete.length} chord charts from section ${sectionId}:`, chordIds);
       
-      // Always update local state regardless of some failures (optimistic update)
+      // Use batch delete endpoint
+      const response = await fetch('/api/chord-charts/batch-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ chord_ids: chordIds })
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          const errorData = await response.json();
+          console.warn('Rate limit exceeded, will retry after delay');
+          // Show user-friendly message for rate limits
+          alert(`Rate limit exceeded. Please wait a moment and try again. (${errorData.error})`);
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: Failed to batch delete chord charts`);
+      }
+
+      const result = await response.json();
+      console.log('Batch delete result:', result);
+
+      // Handle partial successes
+      if (result.deleted && result.deleted.length > 0) {
+        console.log(`Successfully deleted ${result.deleted.length} chord charts`);
+      }
+      
+      if (result.not_found && result.not_found.length > 0) {
+        console.warn(`${result.not_found.length} chord charts were already deleted:`, result.not_found);
+      }
+      
+      if (result.failed && result.failed.length > 0) {
+        console.error(`Failed to delete ${result.failed.length} chord charts:`, result.failed);
+      }
+
+      // Always update local state optimistically (backend handles partial failures)
       // Remove chord charts from local state
       setChordCharts(prev => ({
         ...prev,
@@ -395,14 +423,22 @@ export const PracticePage = () => {
         ...prev,
         [itemId]: (prev[itemId] || []).filter(section => section.id !== sectionId)
       }));
-      
-      // Only throw if all deletions failed
-      if (failures.length === chartsToDelete.length && chartsToDelete.length > 0) {
-        throw new Error(`All chord chart deletions failed`);
+
+      // Only throw if batch delete completely failed
+      if (!result.success && result.failed && result.failed.length === chordIds.length) {
+        throw new Error(result.error || 'All chord chart deletions failed');
       }
       
     } catch (error) {
       console.error('Error deleting section:', error);
+      // TODO: Add user-visible error notification
+    } finally {
+      // Always clear the deleting state
+      setDeletingSection(prev => {
+        const next = new Set(prev);
+        next.delete(sectionKey);
+        return next;
+      });
     }
   };
 
@@ -1026,6 +1062,12 @@ export const PracticePage = () => {
       });
 
       if (!response.ok) {
+        if (response.status === 429) {
+          const errorData = await response.json();
+          console.warn('Rate limit exceeded for individual delete');
+          alert(`Rate limit exceeded. Please wait a moment and try again. (${errorData.error})`);
+          return;
+        }
         throw new Error(`Failed to delete chord chart: ${response.statusText}`);
       }
 
@@ -1060,12 +1102,31 @@ export const PracticePage = () => {
     }
   };
 
+  const handleEditChordChart = (itemId, chordId, chartData) => {
+    console.log('Edit chord chart:', chordId, 'for item:', itemId, 'with data:', chartData);
+    
+    // Show the chord editor for this item
+    setShowChordEditor(prev => ({
+      ...prev,
+      [itemId]: true
+    }));
+    
+    // Set the editing chord ID in the editor so it knows to update instead of create
+    // We'll need to pass this to the ChordChartEditor component
+    setEditingChordId(chordId);
+  };
+
   const toggleChordEditor = (itemId, e) => {
     e?.stopPropagation();
     setShowChordEditor(prev => ({
       ...prev,
       [itemId]: !prev[itemId]
     }));
+    
+    // Clear editing state when closing the editor
+    if (prev[itemId]) {
+      setEditingChordId(null);
+    }
   };
 
   return (
@@ -1270,6 +1331,25 @@ export const PracticePage = () => {
                                       position: 'relative' // Ensure positioning context
                                     }}
                                   >
+                                    {/* Edit button */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        console.log('Edit chord chart clicked:', chart.id);
+                                        handleEditChordChart(routineItem.details?.A, chart.id, chart);
+                                      }}
+                                      className="absolute bottom-1 left-1 w-6 h-6 text-blue-400 hover:text-blue-200 flex items-center justify-center text-sm transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
+                                      title="Edit chord chart"
+                                      style={{
+                                        position: 'absolute',
+                                        bottom: '4px',
+                                        left: '4px',
+                                        zIndex: 20
+                                      }}
+                                    >
+                                      ✏️
+                                    </button>
+
                                     {/* Delete button */}
                                     <button
                                       onClick={(e) => {
@@ -1334,7 +1414,12 @@ export const PracticePage = () => {
                           <ChordChartEditor
                             itemId={routineItem.details?.A}
                             defaultTuning={routineItem.details?.H || 'EADGBE'}
+                            editingChordId={editingChordId}
                             onSave={(chartData) => handleSaveChordChart(routineItem.details?.A, chartData)}
+                            onCancel={() => {
+                              setShowChordEditor(prev => ({ ...prev, [routineItem.details?.A]: false }));
+                              setEditingChordId(null);
+                            }}
                           />
                         )}
                       </div>

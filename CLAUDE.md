@@ -204,6 +204,8 @@ IMPORTANT:
 
 - You often try `python` first, which doesn't work, so just start with `python3`
 
+- If we ask Opus 4 for debugging help, please remind them not to try to start the server because it's already running and watchers are taking care of updates.
+
 - Contextual reminder: In guitar we count strings in order from high pitch to low, so the string on the right side of our charts is string one. Likewise with frets, so fret one is at the top, and when we go "up" a fret, that means the next fret downward on the chart
 
 ## SVGuitar Chord Chart Sizing

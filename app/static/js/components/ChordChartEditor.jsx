@@ -15,7 +15,7 @@ const defaultChartConfig = {
   height: 310             // Even larger height (taller than wide)
 };
 
-export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) => {
+export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = null, defaultTuning = 'EADGBE' }) => {
   const [title, setTitle] = useState('');
   const [startingFret, setStartingFret] = useState(1);
   const [numFrets, setNumFrets] = useState(5);
@@ -63,10 +63,18 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
         chordToUse = matches[0];
         console.log(`Found 1 match for "${chordName}", auto-filling...`);
       } else {
-        // Multiple matches - ask user which one to use
-        console.log(`Found ${matches.length} matches for "${chordName}"`);
-        // For now, just use the first one - we'll add user selection later
-        chordToUse = matches[0];
+        // Multiple matches - use the most recent one (highest order/ID)
+        console.log(`Found ${matches.length} matches for "${chordName}", using most recent version`);
+        // Sort by order (or ID if order is the same) and take the last one
+        matches.sort((a, b) => {
+          const orderA = parseInt(a.order) || 0;
+          const orderB = parseInt(b.order) || 0;
+          if (orderA !== orderB) return orderA - orderB;
+          // If order is the same, use ID as tiebreaker
+          return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+        });
+        chordToUse = matches[matches.length - 1]; // Take the last (most recent)
+        console.log(`Using chord with ID ${chordToUse.id} (order: ${chordToUse.order})`);
       }
       
       // Populate editor with existing chord data
@@ -128,7 +136,7 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
   };
 
   const handleEditorClick = (event) => {
-    if (editMode !== 'fingers') return;
+    if (editMode !== 'fingers' && editMode !== 'barres') return;
 
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
@@ -206,7 +214,12 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
     if (fretIndex >= 1 && fretIndex <= numFrets) {
       const svguitarFret = fretIndex;
       console.log('SVGuitar coordinates:', { svguitarString, svguitarFret });
-      toggleFinger(svguitarString, svguitarFret);
+      
+      if (editMode === 'fingers') {
+        toggleFinger(svguitarString, svguitarFret);
+      } else if (editMode === 'barres') {
+        toggleBarre(svguitarString, svguitarFret);
+      }
     }
   };
 
@@ -279,6 +292,37 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
         next.delete(stringNum);
         return next;
       });
+    }
+  };
+
+  const toggleBarre = (string, fret) => {
+    console.log('toggleBarre called with:', { string, fret });
+    
+    // Check if there's already a barre at this fret
+    const existingBarreIndex = barres.findIndex(barre => barre.fret === fret);
+    
+    if (existingBarreIndex >= 0) {
+      // Remove existing barre at this fret
+      setBarres(prev => prev.filter((_, index) => index !== existingBarreIndex));
+      console.log('Removed barre at fret', fret);
+    } else {
+      // Add new barre from string 6 to string 1 at this fret
+      const newBarre = {
+        fromString: 6,      // Start from lowest string (6th string)
+        toString: 1,        // End at highest string (1st string)
+        fret: fret,
+        text: '1'           // Default finger number
+      };
+      
+      setBarres(prev => [...prev, newBarre]);
+      console.log('Added barre at fret', fret, ':', newBarre);
+      
+      // Remove any individual finger positions that would conflict with the barre
+      setFingers(prev => prev.filter(([, fingerFret]) => fingerFret !== fret));
+      
+      // Remove any nut markers since barres don't work with open strings
+      setOpenStrings(new Set());
+      setMutedStrings(new Set());
     }
   };
 
@@ -485,6 +529,13 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
             Edit Fingers
           </Button>
           <Button
+            variant={editMode === 'barres' ? 'default' : 'outline'}
+            onClick={() => setEditMode('barres')}
+            className="flex-1 bg-green-500 hover:bg-green-600 text-white"
+          >
+            Edit Barres
+          </Button>
+          <Button
             variant={editMode === 'text' ? 'default' : 'outline'}
             onClick={() => setEditMode('text')}
             className="flex-1 border-gray-600"
@@ -493,32 +544,62 @@ export const ChordChartEditor = ({ itemId, onSave, defaultTuning = 'EADGBE' }) =
           </Button>
         </div>
 
-        {/* Save button */}
-        <Button 
-          onClick={() => {
-            console.log('Saving chord chart with title:', title, {
-              openStrings: Array.from(openStrings),
-              mutedStrings: Array.from(mutedStrings),
-              fingers
-            });
-            onSave({ 
-              title, 
-              startingFret, 
-              numFrets, 
-              numStrings, 
-              tuning, 
-              capo, 
-              fingers, 
-              barres,
-              openStrings: Array.from(openStrings),
-              mutedStrings: Array.from(mutedStrings)
-            });
-          }} 
-          className={`w-full ${title.trim() ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
-          disabled={!title.trim()}
-        >
-          Add Chord Chart
-        </Button>
+        {/* Mode-specific instructions */}
+        {editMode === 'barres' && (
+          <div className="bg-green-900 bg-opacity-50 border border-green-600 rounded-lg p-3 text-sm text-green-200">
+            <div className="font-semibold mb-1">Barre Mode Instructions:</div>
+            <div>Click on any fret to add/remove a full barre across all strings at that fret. Perfect for chords like F, B, F#m, etc.</div>
+          </div>
+        )}
+        
+        {editMode === 'fingers' && (
+          <div className="bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg p-3 text-sm text-blue-200">
+            <div className="font-semibold mb-1">Finger Mode Instructions:</div>
+            <div>Click on frets to place individual finger positions. Click above the nut for open (O) or muted (X) strings.</div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex gap-2">
+          <Button 
+            onClick={() => {
+              console.log('Saving chord chart with title:', title, {
+                openStrings: Array.from(openStrings),
+                mutedStrings: Array.from(mutedStrings),
+                fingers,
+                barres,
+                editingChordId
+              });
+              onSave({ 
+                title, 
+                startingFret, 
+                numFrets, 
+                numStrings, 
+                tuning, 
+                capo, 
+                fingers, 
+                barres,
+                openStrings: Array.from(openStrings),
+                mutedStrings: Array.from(mutedStrings),
+                editingChordId  // Pass this so the save handler knows whether to create or update
+              });
+            }} 
+            className={`flex-1 ${title.trim() ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
+            disabled={!title.trim()}
+          >
+            {editingChordId ? 'Update Chord Chart' : 'Add Chord Chart'}
+          </Button>
+          
+          {onCancel && (
+            <Button 
+              onClick={onCancel}
+              variant="outline"
+              className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              Cancel
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
