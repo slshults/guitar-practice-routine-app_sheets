@@ -8,7 +8,8 @@ from app.sheets import ( # type: ignore
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
     get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
     records_to_sheet, get_chord_charts_for_item, add_chord_chart, 
-    delete_chord_chart, update_chord_chart, update_chord_charts_order
+    delete_chord_chart, update_chord_chart, update_chord_charts_order,
+    get_common_chord_charts, seed_common_chord_charts, bulk_import_chords_from_tormodkv
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -1133,6 +1134,42 @@ def batch_delete_chord_charts_route():
         app.logger.error(f"Error in batch delete chord charts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/chord-charts/common', methods=['GET'])
+def get_common_chord_charts_route():
+    """Get all common chord charts from the CommonChords sheet."""
+    try:
+        app.logger.info("Fetching common chord charts")
+        common_chords = get_common_chord_charts()
+        
+        # Add cache control headers to allow caching but ensure freshness
+        response = jsonify(common_chords)
+        response.headers['Cache-Control'] = 'public, max-age=300'  # Cache for 5 minutes
+        
+        app.logger.info(f"Returning {len(common_chords)} common chord charts")
+        return response
+        
+    except Exception as e:
+        app.logger.error(f"Error fetching common chord charts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chord-charts/seed', methods=['POST'])
+def seed_common_chord_charts_route():
+    """Seed the CommonChords sheet with essential chords."""
+    try:
+        app.logger.info("Seeding common chord charts")
+        success = seed_common_chord_charts()
+        
+        if success:
+            app.logger.info("Successfully seeded common chord charts")
+            return jsonify({'success': True, 'message': 'Common chords seeded successfully'})
+        else:
+            app.logger.error("Failed to seed common chord charts")
+            return jsonify({'success': False, 'error': 'Failed to seed common chords'}), 500
+            
+    except Exception as e:
+        app.logger.error(f"Error seeding common chord charts: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/chord-charts/<int:chord_id>', methods=['PUT'])
 def update_chord_chart_route(chord_id):
     """Update a chord chart by ID."""
@@ -1171,3 +1208,40 @@ def update_chord_charts_order_route(item_id):
     except Exception as e:
         app.logger.error(f"Error updating chord chart order: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chord-charts/bulk-import', methods=['POST'])
+def bulk_import_chords_route():
+    """Import chords from TormodKv's SVGuitar-ChordCollection repository."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        data = request.json
+        chord_names = data.get('chord_names', None)  # None means import all available
+        
+        app.logger.info(f"Starting bulk import of chords: {chord_names or 'all available'}")
+        
+        # Import chords using our bulk import function
+        results = bulk_import_chords_from_tormodkv(chord_names)
+        
+        # Log results
+        imported_count = len(results.get('imported', []))
+        skipped_count = len(results.get('skipped', []))
+        failed_count = len(results.get('failed', []))
+        
+        app.logger.info(f"Bulk import completed: {imported_count} imported, {skipped_count} skipped, {failed_count} failed")
+        
+        # Return success response with detailed results
+        return jsonify({
+            'success': True,
+            'results': results,
+            'summary': {
+                'imported': imported_count,
+                'skipped': skipped_count,
+                'failed': failed_count
+            }
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error in bulk import: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500

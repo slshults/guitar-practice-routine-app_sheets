@@ -52,29 +52,71 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         chart.title.toLowerCase() === chordName.toLowerCase()
       );
       
-      if (matches.length === 0) {
-        console.log(`No existing chord found for "${chordName}"`);
-        return;
-      }
-      
       let chordToUse;
       
-      if (matches.length === 1) {
-        chordToUse = matches[0];
-        console.log(`Found 1 match for "${chordName}", auto-filling...`);
+      if (matches.length === 0) {
+        console.log(`No existing chord found for "${chordName}", checking common chords...`);
+        
+        // Fallback: Check common chords database with retry logic
+        try {
+          console.log('Attempting to fetch common chords...');
+          
+          // Add a small delay to avoid rapid API calls
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const commonResponse = await fetch('/api/chord-charts/common', {
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          });
+          
+          if (commonResponse.ok) {
+            const commonChords = await commonResponse.json();
+            console.log(`Fetched ${commonChords.length} common chords from database`);
+            
+            // Find matching chord name in common chords (case-insensitive)
+            const commonMatches = commonChords.filter(chart => 
+              chart.title.toLowerCase() === chordName.toLowerCase()
+            );
+            
+            if (commonMatches.length > 0) {
+              // Use the first common chord match (they should be curated)
+              chordToUse = commonMatches[0];
+              console.log(`Found common chord for "${chordName}", auto-filling from database...`);
+            } else {
+              console.log(`No common chord found for "${chordName}" in ${commonChords.length} available chords`);
+              return;
+            }
+          } else {
+            console.log(`Failed to fetch common chords: ${commonResponse.status} ${commonResponse.statusText}`);
+            // Don't fail completely - maybe we can try again later
+            return;
+          }
+        } catch (commonError) {
+          console.error('Error fetching common chords:', commonError);
+          // Don't fail completely - maybe we can try again later
+          return;
+        }
       } else {
-        // Multiple matches - use the most recent one (highest order/ID)
-        console.log(`Found ${matches.length} matches for "${chordName}", using most recent version`);
-        // Sort by order (or ID if order is the same) and take the last one
-        matches.sort((a, b) => {
-          const orderA = parseInt(a.order) || 0;
-          const orderB = parseInt(b.order) || 0;
-          if (orderA !== orderB) return orderA - orderB;
-          // If order is the same, use ID as tiebreaker
-          return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
-        });
-        chordToUse = matches[matches.length - 1]; // Take the last (most recent)
-        console.log(`Using chord with ID ${chordToUse.id} (order: ${chordToUse.order})`);
+        // Found existing chords for this item
+        if (matches.length === 1) {
+          chordToUse = matches[0];
+          console.log(`Found 1 match for "${chordName}", auto-filling...`);
+        } else {
+          // Multiple matches - use the most recent one (highest order/ID)
+          console.log(`Found ${matches.length} matches for "${chordName}", using most recent version`);
+          // Sort by order (or ID if order is the same) and take the last one
+          matches.sort((a, b) => {
+            const orderA = parseInt(a.order) || 0;
+            const orderB = parseInt(b.order) || 0;
+            if (orderA !== orderB) return orderA - orderB;
+            // If order is the same, use ID as tiebreaker
+            return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+          });
+          chordToUse = matches[matches.length - 1]; // Take the last (most recent)
+          console.log(`Using chord with ID ${chordToUse.id} (order: ${chordToUse.order})`);
+        }
       }
       
       // Populate editor with existing chord data
@@ -85,7 +127,24 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         setNumStrings(chordToUse.numStrings || 6);
         setTuning(chordToUse.tuning || defaultTuning);
         setCapo(chordToUse.capo || 0);
-        setFingers(chordToUse.fingers || []);
+        
+        // Convert finger objects to [string, fret] arrays if needed
+        const fingersData = chordToUse.fingers || [];
+        const normalizedFingers = fingersData.map(finger => {
+          // If it's already an array, use as-is
+          if (Array.isArray(finger)) {
+            return finger;
+          }
+          // If it's an object with string/fret properties, convert to array
+          if (finger && typeof finger === 'object' && 'string' in finger && 'fret' in finger) {
+            return [finger.string, finger.fret];
+          }
+          // Fallback: assume it's already in the right format
+          return finger;
+        });
+        console.log('Normalized fingers from', fingersData, 'to', normalizedFingers);
+        
+        setFingers(normalizedFingers);
         setBarres(chordToUse.barres || []);
         setOpenStrings(new Set(chordToUse.openStrings || []));
         setMutedStrings(new Set(chordToUse.mutedStrings || []));

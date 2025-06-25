@@ -8,9 +8,30 @@ import logging
 from datetime import datetime
 from functools import lru_cache
 import time
+import threading
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
+
+# Global rate limiting for batch operations
+_last_batch_operation_time = 0
+_batch_operation_lock = threading.Lock()
+
+def _throttle_batch_operation():
+    """Ensure minimum time between batch operations to avoid rate limits"""
+    global _last_batch_operation_time
+    with _batch_operation_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_batch_operation_time
+        min_interval = 1.0  # Minimum 1 second between batch operations
+        
+        if time_since_last < min_interval:
+            sleep_time = min_interval - time_since_last
+            logging.info(f"Throttling batch operation - sleeping {sleep_time:.2f}s")
+            time.sleep(sleep_time)
+        
+        _last_batch_operation_time = time.time()
 
 def retry_on_rate_limit(func, max_retries=3, base_delay=1):
     """
@@ -180,19 +201,19 @@ def records_to_sheet(worksheet, records, is_routine_worksheet=True):
             row.append(record.get(col, ''))
         rows.append(row)
     
-    # Calculate range
+    # Calculate range - extend beyond our data to clear unused rows
     range_start = f'A2'
-    range_end = f'{col_end}{len(rows) + 1}'  # +1 because we start at row 2
-    range_str = f'{range_start}:{range_end}'
+    data_end_row = len(rows) + 1  # +1 because we start at row 2
+    clear_end_row = max(data_end_row + 50, 100)  # Clear extra rows to handle deletions
+    range_str = f'{range_start}:{col_end}{clear_end_row}'
     logging.debug(f"Writing to range: {range_str}")
-    logging.debug(f"Data rows to write: {rows}")
     
-    # Clear the range first
-    worksheet.batch_clear([f'A2:{col_end}'])
-    logging.debug(f"Clearing sheet range before write: A2:{col_end}")
+    # Extend rows with empty rows to clear unused space - this avoids separate batch_clear call
+    extended_rows = rows + [[''] * num_cols] * (clear_end_row - data_end_row)
+    logging.debug(f"Data rows to write: {len(rows)} data + {len(extended_rows) - len(rows)} clearing rows")
     
-    # Write all data at once
-    worksheet.update(range_str, rows, value_input_option='USER_ENTERED')
+    # Write all data at once (including clearing unused rows)
+    worksheet.update(range_str, extended_rows, value_input_option='USER_ENTERED')
     logging.debug(f"Sheet update completed")
     logging.debug(f"Updated sheet with {len(rows)} records")
     
@@ -1053,7 +1074,12 @@ def batch_delete_chord_charts(chord_ids):
     if not chord_ids:
         return {'success': True, 'deleted': [], 'not_found': [], 'failed': []}
     
+    # Apply global throttling to prevent concurrent batch operations
+    _throttle_batch_operation()
+    
     def do_batch_delete():
+        # Add small delay before starting to avoid back-to-back API calls
+        time.sleep(0.2)
         spread = get_spread()
         sheet = spread.worksheet('ChordCharts')
         records = sheet_to_records(sheet, is_routine_worksheet=False)
@@ -1061,7 +1087,7 @@ def batch_delete_chord_charts(chord_ids):
     
     try:
         # Apply retry logic to the entire operation, including initial data fetch
-        spread, sheet, records = retry_on_rate_limit(do_batch_delete)
+        _, sheet, records = retry_on_rate_limit(do_batch_delete, max_retries=2, base_delay=2)
         
         # Track results
         deleted_ids = []
@@ -1103,9 +1129,11 @@ def batch_delete_chord_charts(chord_ids):
         
         # Save updated records in one API call with retry logic
         def save_with_retry():
+            # Add delay before save operation to space out API calls
+            time.sleep(0.3)
             return records_to_sheet(sheet, records, is_routine_worksheet=False)
         
-        success = retry_on_rate_limit(save_with_retry)
+        success = retry_on_rate_limit(save_with_retry, max_retries=2, base_delay=2)
         
         if success:
             deleted_ids = [chart['A'] for chart in charts_to_delete]
@@ -1210,3 +1238,366 @@ def update_chord_charts_order(item_id, chord_charts):
     except Exception as e:
         logging.error(f"Error updating chord charts order: {str(e)}")
         return False
+
+def get_common_chord_charts():
+    """Get all common chord charts from the CommonChords sheet."""
+    try:
+        spread = get_spread()
+        
+        # Try to get the CommonChords sheet, create if it doesn't exist
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            logging.info("CommonChords sheet not found, creating it...")
+            # Create the sheet with headers
+            sheet = spread.add_worksheet(title='CommonChords', rows=100, cols=6)
+            # Add headers (same as ChordCharts)
+            sheet.update('A1:F1', [['ChordID', 'ItemID', 'Title', 'ChordData', 'CreatedAt', 'Order']])
+            return []  # Return empty list for now
+        
+        # Get all records
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Convert to the same format as regular chord charts
+        common_chords = []
+        for record in records:
+            try:
+                chord_data_str = record.get('D', '{}')
+                chord_data = json.loads(chord_data_str) if chord_data_str else {}
+                
+                chord_chart = {
+                    'id': record.get('A'),
+                    'itemId': record.get('B', 'common'),  # Mark as common chord
+                    'title': record.get('C'),
+                    'createdAt': record.get('E'),
+                    'order': record.get('F', '0'),
+                    # Chord data fields
+                    'fingers': chord_data.get('fingers', []),
+                    'barres': chord_data.get('barres', []),
+                    'openStrings': chord_data.get('openStrings', []),
+                    'mutedStrings': chord_data.get('mutedStrings', []),
+                    'startingFret': chord_data.get('startingFret', 1),
+                    'numFrets': chord_data.get('numFrets', 5),
+                    'numStrings': chord_data.get('numStrings', 6),
+                    'tuning': chord_data.get('tuning', 'EADGBE'),
+                    'capo': chord_data.get('capo', 0)
+                }
+                common_chords.append(chord_chart)
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logging.warning(f"Error parsing chord data for common chord {record.get('A')}: {str(e)}")
+                continue
+        
+        logging.info(f"Retrieved {len(common_chords)} common chord charts")
+        return common_chords
+        
+    except Exception as e:
+        logging.error(f"Error getting common chord charts: {str(e)}")
+        return []
+
+def seed_common_chord_charts():
+    """Seed the CommonChords sheet with essential guitar chords."""
+    try:
+        spread = get_spread()
+        
+        # Get or create the CommonChords sheet
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            logging.info("CommonChords sheet not found, creating it...")
+            sheet = spread.add_worksheet(title='CommonChords', rows=100, cols=6)
+            sheet.update('A1:F1', [['ChordID', 'ItemID', 'Title', 'ChordData', 'CreatedAt', 'Order']])
+        
+        # Get existing records to avoid duplicates
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        existing_titles = {record.get('C', '').lower() for record in records}
+        
+        # Essential chord fingerings - starting with basic open chords
+        essential_chords = [
+            {
+                'title': 'E',
+                'fingers': [
+                    {'string': 3, 'fret': 1, 'finger': 1},  # G string (SVGuitar string 3), 1st fret, index finger
+                    {'string': 4, 'fret': 2, 'finger': 2},  # D string (SVGuitar string 4), 2nd fret, middle finger
+                    {'string': 5, 'fret': 2, 'finger': 3}   # A string (SVGuitar string 5), 2nd fret, ring finger
+                ],
+                'openStrings': [1, 2, 6],  # High E (1), B (2), low E (6) strings open
+                'mutedStrings': [],
+                'barres': []
+            },
+            {
+                'title': 'Am',
+                'fingers': [
+                    {'string': 2, 'fret': 1, 'finger': 1},  # B string (SVGuitar string 2), 1st fret, index finger
+                    {'string': 3, 'fret': 2, 'finger': 2},  # G string (SVGuitar string 3), 2nd fret, middle finger
+                    {'string': 4, 'fret': 2, 'finger': 3}   # D string (SVGuitar string 4), 2nd fret, ring finger
+                ],
+                'openStrings': [1, 5],     # High E (1), A (5) strings open
+                'mutedStrings': [6],       # Low E (6) string muted
+                'barres': []
+            },
+            {
+                'title': 'C',
+                'fingers': [
+                    {'string': 2, 'fret': 1, 'finger': 1},  # B string (SVGuitar string 2), 1st fret, index finger
+                    {'string': 4, 'fret': 2, 'finger': 2},  # D string (SVGuitar string 4), 2nd fret, middle finger
+                    {'string': 5, 'fret': 3, 'finger': 3}   # A string (SVGuitar string 5), 3rd fret, ring finger
+                ],
+                'openStrings': [1, 3],     # High E (1), G (3) strings open
+                'mutedStrings': [6],       # Low E (6) string muted
+                'barres': []
+            },
+            {
+                'title': 'G',
+                'fingers': [
+                    {'string': 1, 'fret': 3, 'finger': 3},  # High E string (SVGuitar string 1), 3rd fret, ring finger
+                    {'string': 6, 'fret': 3, 'finger': 2}   # Low E string (SVGuitar string 6), 3rd fret, middle finger
+                ],
+                'openStrings': [2, 3, 4, 5],  # B (2), G (3), D (4), A (5) strings open
+                'mutedStrings': [],
+                'barres': []
+            },
+            {
+                'title': 'A',
+                'fingers': [
+                    {'string': 4, 'fret': 2, 'finger': 1},  # D string (SVGuitar string 4), 2nd fret, index finger
+                    {'string': 3, 'fret': 2, 'finger': 2},  # G string (SVGuitar string 3), 2nd fret, middle finger
+                    {'string': 2, 'fret': 2, 'finger': 3}   # B string (SVGuitar string 2), 2nd fret, ring finger
+                ],
+                'openStrings': [1, 5],     # High E (1), A (5) strings open
+                'mutedStrings': [6],       # Low E (6) string muted
+                'barres': []
+            },
+            {
+                'title': 'D',
+                'fingers': [
+                    {'string': 3, 'fret': 2, 'finger': 1},  # G string (SVGuitar string 3), 2nd fret, index finger
+                    {'string': 2, 'fret': 3, 'finger': 3},  # B string (SVGuitar string 2), 3rd fret, ring finger
+                    {'string': 1, 'fret': 2, 'finger': 2}   # High E string (SVGuitar string 1), 2nd fret, middle finger
+                ],
+                'openStrings': [4],        # D (4) string open
+                'mutedStrings': [5, 6],    # A (5), Low E (6) strings muted
+                'barres': []
+            }
+        ]
+        
+        # Add chords that don't already exist
+        chords_to_add = []
+        for i, chord in enumerate(essential_chords):
+            if chord['title'].lower() not in existing_titles:
+                chord_data = {
+                    'fingers': chord['fingers'],
+                    'barres': chord['barres'],
+                    'openStrings': chord['openStrings'],
+                    'mutedStrings': chord['mutedStrings'],
+                    'startingFret': 1,
+                    'numFrets': 5,
+                    'numStrings': 6,
+                    'tuning': 'EADGBE',
+                    'capo': 0
+                }
+                
+                new_record = {
+                    'A': str(i + 1),                    # ChordID
+                    'B': 'common',                      # ItemID (mark as common)
+                    'C': chord['title'],                # Title
+                    'D': json.dumps(chord_data),        # ChordData (JSON)
+                    'E': datetime.now().isoformat(),    # CreatedAt
+                    'F': str(i)                         # Order
+                }
+                chords_to_add.append(new_record)
+        
+        if chords_to_add:
+            # Add new records to existing ones
+            all_records = records + chords_to_add
+            success = records_to_sheet(sheet, all_records, is_routine_worksheet=False)
+            
+            if success:
+                logging.info(f"Seeded {len(chords_to_add)} common chords: {[c['C'] for c in chords_to_add]}")
+                return True
+            else:
+                logging.error("Failed to save seeded common chords")
+                return False
+        else:
+            logging.info("All essential chords already exist in CommonChords sheet")
+            return True
+            
+    except Exception as e:
+        logging.error(f"Error seeding common chord charts: {str(e)}")
+        return False
+
+def convert_fret_positions_to_svguitar(positions_array, fingerings_array=None):
+    """
+    Convert TormodKv chord format to SVGuitar format.
+    
+    Args:
+        positions_array: List like ["x","3","2","0","1","0"] representing strings 6→1
+        fingerings_array: Optional fingerings (we'll use positions if not provided)
+        
+    Returns:
+        Dict with SVGuitar format: {fingers: [[string, fret]], openStrings: [], mutedStrings: []}
+    """
+    try:
+        if not positions_array or len(positions_array) != 6:
+            raise ValueError("positions_array must be a list of 6 string positions")
+            
+        fingers = []
+        open_strings = []
+        muted_strings = []
+        
+        # Convert positions - TormodKv uses strings 6→1 (low E to high E)
+        # SVGuitar uses strings 1→6 (high E to low E), so we need to reverse the mapping
+        for i, position in enumerate(positions_array):
+            string_number = 6 - i  # Convert: index 0 (string 6) → SVGuitar string 6
+                                   #          index 5 (string 1) → SVGuitar string 1
+            
+            if position == "x":
+                muted_strings.append(string_number)
+            elif position == "0":
+                open_strings.append(string_number)
+            else:
+                try:
+                    fret_number = int(position)
+                    if fret_number > 0:
+                        fingers.append([string_number, fret_number])
+                except ValueError:
+                    logging.warning(f"Invalid fret position: {position}, skipping")
+                    continue
+        
+        return {
+            'fingers': fingers,
+            'openStrings': open_strings,
+            'mutedStrings': muted_strings,
+            'tuning': 'EADGBE',  # Standard tuning
+            'capo': 0,
+            'startingFret': 1,
+            'numFrets': 5,
+            'numStrings': 6,
+            'barres': []  # TormodKv format doesn't specify barres, leave empty
+        }
+        
+    except Exception as e:
+        logging.error(f"Error converting fret positions: {str(e)}")
+        raise ValueError(f"Failed to convert chord format: {str(e)}")
+
+def bulk_import_chords_from_tormodkv(chord_names=None):
+    """
+    Import chords from TormodKv's SVGuitar-ChordCollection repository.
+    
+    Args:
+        chord_names: List of chord names to import, or None to import all available
+        
+    Returns:
+        Dict with results: {'imported': [], 'skipped': [], 'failed': []}
+    """
+    try:
+        import requests
+        import json
+        
+        # Fetch the complete chords JSON from TormodKv's repository
+        url = "https://raw.githubusercontent.com/TormodKv/SVGuitar-ChordCollection/master/completeChords.json"
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        
+        chord_data = response.json()
+        results = {'imported': [], 'skipped': [], 'failed': []}
+        
+        # Get or create CommonChords sheet
+        spread = get_spread()
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            sheet = spread.add_worksheet(title='CommonChords', rows=1000, cols=6)
+            sheet.update('A1:F1', [['ChordID', 'ItemID', 'Title', 'ChordData', 'CreatedAt', 'Order']])
+        
+        # Get existing records to avoid duplicates
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        existing_titles = {record.get('C', '').lower() for record in records}
+        
+        # Generate next available ID
+        next_id = max([int(float(r.get('A', 0))) for r in records if r.get('A')], default=0) + 1
+        next_order = len(records)
+        
+        # Filter chord names if specified
+        chords_to_import = chord_names if chord_names else list(chord_data.keys())
+        
+        # Process each requested chord
+        for chord_name in chords_to_import:
+            if chord_name not in chord_data:
+                results['failed'].append(f"{chord_name} (not found in TormodKv collection)")
+                continue
+                
+            # Check if chord already exists (case-insensitive)
+            if chord_name.lower() in existing_titles:
+                results['skipped'].append(f"{chord_name} (already exists)")
+                continue
+            
+            try:
+                # Get the first variation of the chord
+                chord_variations = chord_data[chord_name]
+                if not chord_variations or not isinstance(chord_variations, list):
+                    results['failed'].append(f"{chord_name} (invalid data format)")
+                    continue
+                    
+                first_variation = chord_variations[0]
+                positions = first_variation.get('positions', [])
+                
+                if len(positions) != 6:
+                    results['failed'].append(f"{chord_name} (invalid positions array)")
+                    continue
+                
+                # Convert to SVGuitar format
+                svguitar_data = convert_fret_positions_to_svguitar(positions)
+                
+                # Format timestamp
+                now = datetime.now()
+                timestamp = now.strftime('%Y-%m-%d %I:%M%p PST')
+                
+                # Create chord data JSON
+                chord_json = json.dumps(svguitar_data)
+                
+                # Create new record
+                new_record = {
+                    'A': str(next_id),           # ChordID
+                    'B': '',                     # ItemID (empty for common chords)
+                    'C': chord_name,             # Title
+                    'D': chord_json,             # ChordData
+                    'E': timestamp,              # CreatedAt
+                    'F': str(next_order)         # Order
+                }
+                
+                records.append(new_record)
+                existing_titles.add(chord_name.lower())
+                results['imported'].append(chord_name)
+                
+                next_id += 1
+                next_order += 1
+                
+                # Rate limiting - small delay between chords
+                time.sleep(0.1)
+                
+            except Exception as e:
+                logging.error(f"Error processing chord {chord_name}: {str(e)}")
+                results['failed'].append(f"{chord_name} (processing error: {str(e)})")
+                continue
+        
+        # Save all new records to sheet if any were imported
+        if results['imported']:
+            success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+            if success:
+                invalidate_caches()
+                logging.info(f"Successfully imported {len(results['imported'])} chords to CommonChords sheet")
+            else:
+                # If save failed, move imported chords to failed list
+                for chord_name in results['imported']:
+                    results['failed'].append(f"{chord_name} (save failed)")
+                results['imported'] = []
+        
+        return results
+        
+    except requests.RequestException as e:
+        logging.error(f"Error fetching chords from TormodKv repository: {str(e)}")
+        raise ValueError(f"Failed to fetch chord data: {str(e)}")
+    except Exception as e:
+        logging.error(f"Error in bulk import: {str(e)}")
+        raise ValueError(f"Bulk import failed: {str(e)}")
