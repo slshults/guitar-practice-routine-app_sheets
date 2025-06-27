@@ -9,7 +9,8 @@ from app.sheets import ( # type: ignore
     get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
     records_to_sheet, get_chord_charts_for_item, add_chord_chart, 
     delete_chord_chart, update_chord_chart, update_chord_charts_order,
-    get_common_chord_charts, seed_common_chord_charts, bulk_import_chords_from_tormodkv
+    get_common_chord_charts, search_common_chord_charts, seed_common_chord_charts, 
+    bulk_import_chords_from_tormodkv, bulk_import_chords_from_local_file
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -1134,6 +1135,28 @@ def batch_delete_chord_charts_route():
         app.logger.error(f"Error in batch delete chord charts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/chord-charts/common/search', methods=['GET'])
+def search_common_chord_charts_route():
+    """Search for specific common chord charts by name."""
+    try:
+        chord_name = request.args.get('name', '').strip()
+        if not chord_name:
+            return jsonify({'error': 'Chord name parameter required'}), 400
+            
+        app.logger.info(f"Searching common chord charts for: {chord_name}")
+        matching_chords = search_common_chord_charts(chord_name)
+        
+        # Cache search results for longer since they're specific
+        response = jsonify(matching_chords)
+        response.headers['Cache-Control'] = 'public, max-age=1800'  # Cache for 30 minutes
+        
+        app.logger.info(f"Found {len(matching_chords)} matching chord charts for '{chord_name}'")
+        return response
+        
+    except Exception as e:
+        app.logger.error(f"Error searching common chord charts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/chord-charts/common', methods=['GET'])
 def get_common_chord_charts_route():
     """Get all common chord charts from the CommonChords sheet."""
@@ -1244,4 +1267,40 @@ def bulk_import_chords_route():
         
     except Exception as e:
         app.logger.error(f"Error in bulk import: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/chord-charts/bulk-import-local', methods=['POST'])
+def bulk_import_chords_local_route():
+    """Import chords from local TormodKv chord collection file."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        data = request.json
+        chord_names = data.get('chord_names', None)  # None means import all available
+        
+        app.logger.info(f"Starting local bulk import of chords: {chord_names or 'all available'}")
+        
+        # Import chords using our local bulk import function
+        results = bulk_import_chords_from_local_file(chord_names)
+        
+        # Log results
+        imported_count = len(results.get('imported', []))
+        skipped_count = len(results.get('skipped', []))
+        failed_count = len(results.get('failed', []))
+        
+        app.logger.info(f"Local bulk import completed: {imported_count} imported, {skipped_count} skipped, {failed_count} failed")
+        
+        return jsonify({
+            'success': True, 
+            'results': results,
+            'summary': {
+                'imported': imported_count,
+                'skipped': skipped_count,
+                'failed': failed_count
+            }
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error in local bulk import: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500

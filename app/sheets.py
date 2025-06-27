@@ -527,12 +527,20 @@ def get_active_routine():
     try:
         spread = get_spread()
         
-        # Create ActiveRoutine sheet if it doesn't exist
+        # Get ActiveRoutine sheet (should already exist)
         try:
             sheet = spread.worksheet('ActiveRoutine')
-        except:
-            sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
-            sheet.update('A1', '')
+        except gspread.WorksheetNotFound:
+            # Only create if it truly doesn't exist
+            try:
+                sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
+                sheet.update('A1', '')
+            except Exception as create_error:
+                # If creation fails (e.g., already exists), try to get it again
+                if "already exists" in str(create_error):
+                    sheet = spread.worksheet('ActiveRoutine')
+                else:
+                    raise create_error
             
         # Get active routine ID
         active_id = sheet.acell('A1').value
@@ -548,11 +556,19 @@ def set_routine_active(routine_id, active=True):
         spread = get_spread()
         logging.debug(f"Setting routine active status: {routine_id}, active={active}")
         
-        # Get or create ActiveRoutine sheet
+        # Get ActiveRoutine sheet (should already exist)
         try:
             sheet = spread.worksheet('ActiveRoutine')
-        except:
-            sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
+        except gspread.WorksheetNotFound:
+            # Only create if it truly doesn't exist
+            try:
+                sheet = spread.add_worksheet('ActiveRoutine', rows=1, cols=1)
+            except Exception as create_error:
+                # If creation fails (e.g., already exists), try to get it again
+                if "already exists" in str(create_error):
+                    sheet = spread.worksheet('ActiveRoutine')
+                else:
+                    raise create_error
         
         # If activating, simply write the ID
         if active:
@@ -1295,6 +1311,91 @@ def get_common_chord_charts():
         logging.error(f"Error getting common chord charts: {str(e)}")
         return []
 
+def search_common_chord_charts(chord_name):
+    """Search for common chord charts by name using case-insensitive matching."""
+    try:
+        spread = get_spread()
+        
+        # Try to get the CommonChords sheet
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            logging.info("CommonChords sheet not found")
+            return []
+        
+        # Use find_all to search for chord names in the title column (Column C)
+        # Note: gspread's find is case-sensitive, so we'll need to get a few rows and filter
+        try:
+            # Get all values in the title column to search through
+            title_values = sheet.col_values(3)  # Column C (Title)
+            
+            # Find matching row indices (1-based)
+            matching_indices = []
+            chord_name_lower = chord_name.lower()
+            
+            for i, title in enumerate(title_values[1:], start=2):  # Skip header row
+                if title and chord_name_lower in title.lower():
+                    matching_indices.append(i)
+            
+            if not matching_indices:
+                logging.info(f"No common chords found matching '{chord_name}'")
+                return []
+            
+            # Batch get the matching rows
+            ranges = [f'A{i}:F{i}' for i in matching_indices[:10]]  # Limit to 10 matches
+            if len(ranges) == 1:
+                batch_data = [sheet.get(ranges[0])]
+            else:
+                batch_data = sheet.batch_get(ranges)
+            
+            # Convert to chord chart format
+            matching_chords = []
+            for row_data in batch_data:
+                if not row_data or not row_data[0]:  # Skip empty results
+                    continue
+                    
+                row = row_data[0]
+                if len(row) < 4:  # Need at least ChordID, ItemID, Title, ChordData
+                    continue
+                
+                try:
+                    chord_data_str = row[3] if len(row) > 3 else '{}'
+                    chord_data = json.loads(chord_data_str) if chord_data_str else {}
+                    
+                    chord_chart = {
+                        'id': row[0],
+                        'itemId': row[1] if len(row) > 1 else 'common',
+                        'title': row[2] if len(row) > 2 else chord_name,
+                        'createdAt': row[4] if len(row) > 4 else '',
+                        'order': int(float(row[5])) if len(row) > 5 and row[5] else 0,
+                        'fingers': chord_data.get('fingers', []),
+                        'barres': chord_data.get('barres', []),
+                        'numFrets': chord_data.get('numFrets', 5),
+                        'numStrings': chord_data.get('numStrings', 6),
+                        'tuning': chord_data.get('tuning', 'EADGBE'),
+                        'capo': chord_data.get('capo', 0)
+                    }
+                    matching_chords.append(chord_chart)
+                    
+                except (json.JSONDecodeError, ValueError, IndexError) as e:
+                    logging.warning(f"Error parsing search result for chord '{chord_name}': {str(e)}")
+                    continue
+            
+            logging.info(f"Found {len(matching_chords)} common chords matching '{chord_name}'")
+            return matching_chords
+            
+        except Exception as e:
+            logging.warning(f"Error searching common chords, falling back to full search: {str(e)}")
+            # Fallback: get all and filter (not ideal but better than failing)
+            all_chords = get_common_chord_charts()
+            matches = [chord for chord in all_chords 
+                      if chord_name.lower() in chord.get('title', '').lower()]
+            return matches[:10]  # Limit results
+        
+    except Exception as e:
+        logging.error(f"Error searching common chord charts: {str(e)}")
+        return []
+
 def seed_common_chord_charts():
     """Seed the CommonChords sheet with essential guitar chords."""
     try:
@@ -1601,3 +1702,128 @@ def bulk_import_chords_from_tormodkv(chord_names=None):
     except Exception as e:
         logging.error(f"Error in bulk import: {str(e)}")
         raise ValueError(f"Bulk import failed: {str(e)}")
+
+def bulk_import_chords_from_local_file(chord_names=None, local_file_path=None):
+    """
+    Import chords from local TormodKv chord collection file.
+    
+    Args:
+        chord_names: List of chord names to import, or None to import all available
+        local_file_path: Path to local completeChords.json file
+        
+    Returns:
+        Dict with results: {'imported': [], 'skipped': [], 'failed': []}
+    """
+    try:
+        import json
+        import os
+        
+        # Default to the expected location if no path provided
+        if local_file_path is None:
+            local_file_path = '/home/steven/webdev/guitar/practice/gpr/chords/completeChords.json'
+        
+        # Check if file exists
+        if not os.path.exists(local_file_path):
+            raise ValueError(f"Local chord file not found: {local_file_path}")
+        
+        # Load chord data from local file
+        with open(local_file_path, 'r') as f:
+            chord_data = json.load(f)
+        
+        results = {'imported': [], 'skipped': [], 'failed': []}
+        
+        # Get or create CommonChords sheet
+        spread = get_spread()
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            sheet = spread.add_worksheet(title='CommonChords', rows=1000, cols=6)
+            sheet.update('A1:F1', [['ChordID', 'ItemID', 'Title', 'ChordData', 'CreatedAt', 'Order']])
+        
+        # Get existing records to avoid duplicates
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        existing_titles = {record.get('C', '').lower() for record in records}
+        
+        # Generate next available ID
+        next_id = max([int(float(r.get('A', 0))) for r in records if r.get('A')], default=0) + 1
+        next_order = len(records)
+        
+        # Filter chord names if specified
+        chords_to_import = chord_names if chord_names else list(chord_data.keys())
+        
+        logging.info(f"Starting local bulk import of {len(chords_to_import)} chords")
+        
+        # Process each requested chord
+        for chord_name in chords_to_import:
+            if chord_name not in chord_data:
+                results['failed'].append(f"{chord_name} (not found in local collection)")
+                continue
+                
+            # Check if chord already exists (case-insensitive)
+            if chord_name.lower() in existing_titles:
+                results['skipped'].append(f"{chord_name} (already exists)")
+                continue
+            
+            try:
+                # Get the first variation of the chord
+                chord_variations = chord_data[chord_name]
+                if not chord_variations or not isinstance(chord_variations, list):
+                    results['failed'].append(f"{chord_name} (invalid data format)")
+                    continue
+                    
+                first_variation = chord_variations[0]
+                positions = first_variation.get('positions', [])
+                
+                if len(positions) != 6:
+                    results['failed'].append(f"{chord_name} (invalid positions array)")
+                    continue
+                
+                # Convert to SVGuitar format
+                svguitar_data = convert_fret_positions_to_svguitar(positions)
+                
+                # Format timestamp
+                now = datetime.now()
+                timestamp = now.strftime('%Y-%m-%d %I:%M%p PST')
+                
+                # Create chord data JSON
+                chord_json = json.dumps(svguitar_data)
+                
+                # Create new record
+                new_record = {
+                    'A': str(next_id),           # ChordID
+                    'B': '',                     # ItemID (empty for common chords)
+                    'C': chord_name,             # Title
+                    'D': chord_json,             # ChordData
+                    'E': timestamp,              # CreatedAt
+                    'F': str(next_order)         # Order
+                }
+                
+                records.append(new_record)
+                existing_titles.add(chord_name.lower())
+                results['imported'].append(chord_name)
+                
+                next_id += 1
+                next_order += 1
+                
+            except Exception as e:
+                logging.error(f"Error processing chord {chord_name}: {str(e)}")
+                results['failed'].append(f"{chord_name} (processing error: {str(e)})")
+                continue
+        
+        # Save all new records to sheet if any were imported
+        if results['imported']:
+            success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+            if success:
+                invalidate_caches()
+                logging.info(f"Successfully imported {len(results['imported'])} chords from local file to CommonChords sheet")
+            else:
+                # If save failed, move imported chords to failed list
+                for chord_name in results['imported']:
+                    results['failed'].append(f"{chord_name} (save failed)")
+                results['imported'] = []
+        
+        return results
+        
+    except Exception as e:
+        logging.error(f"Error in local bulk import: {str(e)}")
+        raise ValueError(f"Local bulk import failed: {str(e)}")

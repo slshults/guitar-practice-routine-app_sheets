@@ -15,6 +15,39 @@ const defaultChartConfig = {
   height: 310             // Even larger height (taller than wide)
 };
 
+// Utility function for API requests with exponential backoff
+const fetchWithBackoff = async (url, options = {}, maxRetries = 3, onRetry = null) => {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // If rate limited, wait and retry
+      if (response.status === 429) {
+        const waitTime = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+        const message = `Rate limited. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${maxRetries}`;
+        console.log(message);
+        
+        if (onRetry) onRetry(message);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      return response;
+    } catch (error) {
+      if (attempt === maxRetries - 1) throw error;
+      
+      const waitTime = Math.pow(2, attempt) * 1000;
+      const message = `Request failed. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${maxRetries}`;
+      console.log(message);
+      
+      if (onRetry) onRetry(message);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+  
+  throw new Error(`Failed after ${maxRetries} attempts`);
+};
+
 export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = null, defaultTuning = 'EADGBE' }) => {
   const [title, setTitle] = useState('');
   const [startingFret, setStartingFret] = useState(1);
@@ -29,6 +62,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const [barres, setBarres] = useState([]);
   const [openStrings, setOpenStrings] = useState(new Set()); // Track open strings (0)
   const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
+  const [isLoadingChord, setIsLoadingChord] = useState(false); // Loading state for API requests
 
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
@@ -39,10 +73,12 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     if (!chordName.trim() || !itemId) return;
     
     try {
+      setIsLoadingChord(true);
       console.log(`Trying autofill for chord: "${chordName}"`);
       
       // Fetch existing chord charts for this item
-      const response = await fetch(`/api/items/${itemId}/chord-charts`);
+      const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`, {}, 3, 
+        (message) => console.log(`Loading: ${message}`));
       if (!response.ok) return;
       
       const existingChords = await response.json();
@@ -57,39 +93,32 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       if (matches.length === 0) {
         console.log(`No existing chord found for "${chordName}", checking common chords...`);
         
-        // Fallback: Check common chords database with retry logic
+        // Fallback: Search common chords database for specific chord
         try {
-          console.log('Attempting to fetch common chords...');
+          console.log(`Searching common chords for: ${chordName}`);
           
-          // Add a small delay to avoid rapid API calls
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Add a reasonable delay to avoid rapid API calls
+          await new Promise(resolve => setTimeout(resolve, 1000));
           
-          const commonResponse = await fetch('/api/chord-charts/common', {
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          });
+          const searchResponse = await fetchWithBackoff(`/api/chord-charts/common/search?name=${encodeURIComponent(chordName)}`, {}, 3,
+            (message) => console.log(`Searching common chords: ${message}`));
           
-          if (commonResponse.ok) {
-            const commonChords = await commonResponse.json();
-            console.log(`Fetched ${commonChords.length} common chords from database`);
+          if (searchResponse.ok) {
+            const commonMatches = await searchResponse.json();
+            console.log(`Found ${commonMatches.length} matching common chords for "${chordName}"`);
             
-            // Find matching chord name in common chords (case-insensitive)
-            const commonMatches = commonChords.filter(chart => 
-              chart.title.toLowerCase() === chordName.toLowerCase()
-            );
+            // commonMatches is already filtered by the backend
             
             if (commonMatches.length > 0) {
               // Use the first common chord match (they should be curated)
               chordToUse = commonMatches[0];
               console.log(`Found common chord for "${chordName}", auto-filling from database...`);
             } else {
-              console.log(`No common chord found for "${chordName}" in ${commonChords.length} available chords`);
+              console.log(`No common chord found for "${chordName}"`);
               return;
             }
           } else {
-            console.log(`Failed to fetch common chords: ${commonResponse.status} ${commonResponse.statusText}`);
+            console.log(`Failed to search common chords: ${searchResponse.status} ${searchResponse.statusText}`);
             // Don't fail completely - maybe we can try again later
             return;
           }
@@ -152,6 +181,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       
     } catch (error) {
       console.error('Error during autofill:', error);
+    } finally {
+      setIsLoadingChord(false);
     }
   };
 
@@ -273,6 +304,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     if (fretIndex >= 1 && fretIndex <= numFrets) {
       const svguitarFret = fretIndex;
       console.log('SVGuitar coordinates:', { svguitarString, svguitarFret });
+      
       
       if (editMode === 'fingers') {
         toggleFinger(svguitarString, svguitarFret);
@@ -478,19 +510,27 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         <div className="grid grid-cols-3 gap-4">
           <div>
             <div className="text-sm text-blue-400 mb-1">Chord Name</div>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={() => tryAutofill(title)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  tryAutofill(title);
-                }
-              }}
-              placeholder="Enter chord name (e.g. Am, C7)"
-              className="bg-gray-900"
-            />
+            <div className="relative">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => tryAutofill(title)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    tryAutofill(title);
+                  }
+                }}
+                placeholder="Enter chord name (e.g. Am, C7)"
+                className="bg-gray-900"
+                disabled={isLoadingChord}
+              />
+              {isLoadingChord && (
+                <div className="absolute right-2 top-2 text-yellow-400 text-xs">
+                  Loading...
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <div className="text-sm text-green-400 mb-1">Tuning</div>
