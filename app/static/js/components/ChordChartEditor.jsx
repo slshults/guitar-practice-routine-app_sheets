@@ -79,7 +79,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       // Fetch existing chord charts for this item
       const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`, {}, 3, 
         (message) => console.log(`Loading: ${message}`));
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.log(`Failed to fetch chord charts: ${response.status}`);
+        return;
+      }
       
       const existingChords = await response.json();
       
@@ -115,17 +118,15 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
               console.log(`Found common chord for "${chordName}", auto-filling from database...`);
             } else {
               console.log(`No common chord found for "${chordName}"`);
-              return;
+              // Don't return early - let the finally block clean up
             }
           } else {
             console.log(`Failed to search common chords: ${searchResponse.status} ${searchResponse.statusText}`);
-            // Don't fail completely - maybe we can try again later
-            return;
+            // Don't fail completely - let the finally block clean up
           }
         } catch (commonError) {
           console.error('Error fetching common chords:', commonError);
-          // Don't fail completely - maybe we can try again later
-          return;
+          // Don't fail completely - let the finally block clean up
         }
       } else {
         // Found existing chords for this item
@@ -192,10 +193,15 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       const loadChordForEditing = async () => {
         try {
           setIsLoadingChord(true);
+          console.log(`Loading chord ${editingChordId} for editing from item ${itemId}`);
+          
           const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`);
           if (response.ok) {
             const chords = await response.json();
-            const chordToEdit = chords.find(chord => chord.id === editingChordId);
+            // Convert editingChordId to same type as chord.id for comparison
+            const chordToEdit = chords.find(chord => 
+              parseInt(chord.id) === parseInt(editingChordId)
+            );
             
             if (chordToEdit) {
               console.log('Loading chord for editing:', chordToEdit);
@@ -218,11 +224,17 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 return finger;
               });
               
+              console.log('Normalized fingers for editing:', normalizedFingers);
               setFingers(normalizedFingers);
               setBarres(chordToEdit.barres || []);
               setOpenStrings(new Set(chordToEdit.openStrings || []));
               setMutedStrings(new Set(chordToEdit.mutedStrings || []));
+            } else {
+              console.warn(`Chord with ID ${editingChordId} not found in response`);
+              console.log('Available chords:', chords.map(c => ({ id: c.id, title: c.title })));
             }
+          } else {
+            console.error('Failed to fetch chord charts:', response.status);
           }
         } catch (error) {
           console.error('Error loading chord for editing:', error);
@@ -232,6 +244,21 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       };
       
       loadChordForEditing();
+    } else if (editingChordId) {
+      console.warn('editingChordId provided but no itemId');
+    } else {
+      // Reset form when not editing (new chord)
+      console.log('Resetting form for new chord');
+      setTitle('');
+      setStartingFret(1);
+      setNumFrets(5);
+      setNumStrings(6);
+      setTuning(defaultTuning);
+      setCapo(0);
+      setFingers([]);
+      setBarres([]);
+      setOpenStrings(new Set());
+      setMutedStrings(new Set());
     }
   }, [editingChordId, itemId, defaultTuning]);
 

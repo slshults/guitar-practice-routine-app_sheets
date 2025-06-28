@@ -1304,3 +1304,35 @@ def bulk_import_chords_local_route():
     except Exception as e:
         app.logger.error(f"Error in local bulk import: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/debug/log', methods=['POST'])
+def debug_log_route():
+    """Endpoint for frontend to send debug logs to backend."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        data = request.json
+        message = data.get('message', '')
+        level = data.get('level', 'DEBUG')
+        context = data.get('context', {})
+        
+        # Format the message with context if provided
+        if context:
+            formatted_message = f"[FRONTEND {level}] {message} | Context: {context}"
+        else:
+            formatted_message = f"[FRONTEND {level}] {message}"
+        
+        # Log at appropriate level
+        if level.upper() == 'ERROR':
+            app.logger.error(formatted_message)
+        elif level.upper() == 'WARNING':
+            app.logger.warning(formatted_message)
+        else:
+            app.logger.info(formatted_message)
+        
+        return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error in debug log endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500

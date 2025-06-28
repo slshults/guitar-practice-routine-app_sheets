@@ -917,7 +917,7 @@ def initialize_chordcharts_sheet():
             logging.debug("ChordCharts sheet already exists")
             return True
                 
-        except:
+        except gspread.WorksheetNotFound:
             logging.debug("Creating new ChordCharts sheet")
             sheet = spread.add_worksheet('ChordCharts', rows=1000, cols=20)
             

@@ -18,6 +18,10 @@ import { useActiveRoutine } from '@hooks/useActiveRoutine';
 import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw, Book, Music } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
+import { serverDebug, serverInfo } from '../utils/logging';
+
+// Import at top to activate console overrides
+import '../utils/logging';
 
 // Custom Play icon with solid triangle
 const PlayIcon = ({ className }) => (
@@ -87,6 +91,7 @@ export const PracticePage = () => {
   const [chordSections, setChordSections] = useState({});
   const [deletingSection, setDeletingSection] = useState(new Set());
   const [editingChordId, setEditingChordId] = useState(null);
+  const [forceRenderKey, setForceRenderKey] = useState(0);
 
   // Helper function to group chords into sections based on persisted metadata
   const getChordSections = (itemId) => {
@@ -442,16 +447,63 @@ export const PracticePage = () => {
     }
   };
 
+  // Function to force re-render a specific chord chart
+  const forceRerenderChordChart = (itemId, chordId) => {
+    console.log(`Force re-rendering chord chart ${chordId} for item ${itemId}`);
+    
+    // Increment the force render key to trigger a React re-mount
+    setForceRenderKey(currentKey => currentKey + 1);
+    
+    // Use a shorter delay and more direct approach
+    setTimeout(() => {
+      const container = document.getElementById(`saved-chord-chart-${itemId}-${chordId}`);
+      if (container) {
+        console.log('Clearing and re-rendering chord chart DOM element');
+        container.innerHTML = ''; // Clear any existing content
+        
+        // Get the updated chart data from current state
+        setChordCharts(currentChords => {
+          const updatedChart = (currentChords[itemId] || []).find(chart => 
+            parseInt(chart.id) === parseInt(chordId)
+          );
+          
+          if (updatedChart) {
+            console.log('Re-rendering with updated chart data:', updatedChart);
+            renderSavedChordChart(updatedChart, container);
+          } else {
+            console.warn(`Chart ${chordId} not found in state for re-render`);
+          }
+          
+          return currentChords; // Don't change state
+        });
+      } else {
+        console.warn(`Container not found for chord chart ${chordId}`);
+      }
+    }, 50); // Shorter delay for more responsive updates
+  };
+
   // Function to render saved chord charts using SVGuitar
   const renderSavedChordChart = (chartData, container) => {
     if (!window.svguitar || !container) return;
 
     try {
+      // Handle nested chordData structure if present
+      const actualChartData = chartData.chordData || chartData;
+      
       // Debug logging
-      console.log('Rendering saved chord:', chartData.title, {
-        fingers: chartData.fingers,
-        openStrings: chartData.openStrings,
-        mutedStrings: chartData.mutedStrings
+      console.log('DEBUG: renderSavedChordChart called with raw:', JSON.stringify(chartData, null, 2));
+      console.log('DEBUG: Using chart data:', {
+        title: actualChartData.title,
+        fingers: actualChartData.fingers,
+        fingersType: typeof actualChartData.fingers,
+        fingersArray: Array.isArray(actualChartData.fingers),
+        fingersLength: actualChartData.fingers?.length,
+        fingersRaw: JSON.stringify(actualChartData.fingers),
+        openStrings: actualChartData.openStrings,
+        mutedStrings: actualChartData.mutedStrings,
+        barres: actualChartData.barres,
+        startingFret: actualChartData.startingFret,
+        capo: actualChartData.capo
       });
 
       // Clear any existing content
@@ -462,9 +514,9 @@ export const PracticePage = () => {
       
       // Configure the chart
       const config = {
-        strings: chartData.numStrings || 6,
-        frets: chartData.numFrets || 5,
-        position: chartData.startingFret || 1,
+        strings: actualChartData.numStrings || 6,
+        frets: actualChartData.numFrets || 5,
+        position: actualChartData.startingFret || 1,
         tuning: [], // Hide tuning labels in the small display
         width: 150,
         height: 180,
@@ -476,18 +528,28 @@ export const PracticePage = () => {
 
       // Combine regular fingers with open and muted strings (same as in editor)
       const allFingers = [
-        ...(chartData.fingers || []),
+        ...(actualChartData.fingers || []),
         // Add open strings as [string, 0]
-        ...(chartData.openStrings || []).map(string => [string, 0]),
+        ...(actualChartData.openStrings || []).map(string => [string, 0]),
         // Add muted strings as [string, 'x']
-        ...(chartData.mutedStrings || []).map(string => [string, 'x'])
+        ...(actualChartData.mutedStrings || []).map(string => [string, 'x'])
       ];
 
       // Prepare chord data
       const chord = {
         fingers: allFingers,
-        barres: chartData.barres || []
+        barres: actualChartData.barres || []
       };
+      
+      console.log('DEBUG: Final chord data being sent to SVGuitar:', {
+        config,
+        chord,
+        allFingers,
+        originalFingers: actualChartData.fingers,
+        title: actualChartData.title
+      });
+      console.log('DEBUG: Config JSON:', JSON.stringify(config, null, 2));
+      console.log('DEBUG: Chord JSON:', JSON.stringify(chord, null, 2));
 
       // Render the chart
       chart.configure(config).chord(chord).draw();
@@ -535,6 +597,47 @@ export const PracticePage = () => {
         });
 
         setChordCharts(chartsByItem);
+        
+        // Build sections from loaded chord charts
+        const sectionsByItem = {};
+        Object.keys(chartsByItem).forEach(itemId => {
+          const charts = chartsByItem[itemId] || [];
+          
+          if (charts.length === 0) {
+            sectionsByItem[itemId] = [];
+            return;
+          }
+          
+          // Group chords by their section metadata
+          const sectionMap = new Map();
+          
+          charts.forEach(chart => {
+            const sectionId = chart.sectionId || 'section-1';
+            const sectionLabel = chart.sectionLabel || 'Verse';
+            const sectionRepeatCount = chart.sectionRepeatCount || '';
+            
+            if (!sectionMap.has(sectionId)) {
+              sectionMap.set(sectionId, {
+                id: sectionId,
+                label: sectionLabel,
+                repeatCount: sectionRepeatCount,
+                chords: []
+              });
+            }
+            
+            sectionMap.get(sectionId).chords.push(chart);
+          });
+          
+          // Convert map to array
+          sectionsByItem[itemId] = Array.from(sectionMap.values());
+        });
+        
+        setChordSections(sectionsByItem);
+        
+        console.log('[DEBUG] Loaded chord charts and built sections:', {
+          chartsByItem,
+          sectionsByItem
+        });
       } catch (error) {
         console.error('Error loading chord charts:', error);
       }
@@ -955,42 +1058,75 @@ export const PracticePage = () => {
 
   const handleSaveChordChart = async (itemId, chartData) => {
     try {
-      console.log('Saving chord chart for item:', itemId, 'with data:', chartData);
+      serverInfo('Saving chord chart for item', { itemId, chartData });
       
-      // Determine target section (use last section, or create default)
-      const itemSections = getAllSections(itemId);
-      let targetSection;
+      // Determine if we're creating or updating
+      const isUpdate = chartData.editingChordId;
+      let chartDataWithSection;
       
-      console.log(`[DEBUG] Available sections for item ${itemId}:`, itemSections);
-      console.log(`[DEBUG] Current chordCharts state for item ${itemId}:`, chordCharts[itemId]);
-      console.log(`[DEBUG] Current chordSections state for item ${itemId}:`, chordSections[itemId]);
-      
-      if (itemSections.length === 0) {
-        // No sections exist, create default
-        targetSection = {
-          id: 'section-1',
-          label: 'Verse',
-          repeatCount: ''
+      if (isUpdate) {
+        // For updates, preserve the original chord's section information
+        const originalChord = (chordCharts[itemId] || []).find(chord => chord.id === chartData.editingChordId);
+        
+        chartDataWithSection = {
+          ...chartData,
+          // Preserve original section metadata
+          sectionId: originalChord?.sectionId,
+          sectionLabel: originalChord?.sectionLabel,
+          sectionRepeatCount: originalChord?.sectionRepeatCount
         };
+        
+        serverDebug('Updating chord, preserving section', {
+          originalSection: {
+            id: originalChord?.sectionId,
+            label: originalChord?.sectionLabel,
+            repeatCount: originalChord?.sectionRepeatCount
+          }
+        });
+        
       } else {
-        // Use the last section
-        targetSection = itemSections[itemSections.length - 1];
+        // For new chords, determine target section (use last section, or create default)
+        const itemSections = chordSections[itemId] || getChordSections(itemId);
+        let targetSection;
+        
+        serverDebug('Available sections for item', { itemId, itemSections });
+        serverDebug('Current chordCharts state for item', { itemId, chordCharts: chordCharts[itemId] });
+        serverDebug('Current chordSections state for item', { itemId, chordSections: chordSections[itemId] });
+        
+        if (itemSections.length === 0) {
+          // No sections exist, create default
+          targetSection = {
+            id: 'section-1',
+            label: 'Verse',
+            repeatCount: ''
+          };
+        } else {
+          // Use the last section
+          targetSection = itemSections[itemSections.length - 1];
+        }
+        
+        serverDebug('Target section for new chord', { targetSection });
+        
+        // Add section metadata to chord data
+        chartDataWithSection = {
+          ...chartData,
+          sectionId: targetSection.id,
+          sectionLabel: targetSection.label,
+          sectionRepeatCount: targetSection.repeatCount
+        };
       }
       
-      console.log(`[DEBUG] Target section for new chord:`, targetSection);
+      serverDebug('Chord data with section metadata', { chartDataWithSection });
       
-      // Add section metadata to chord data
-      const chartDataWithSection = {
-        ...chartData,
-        sectionId: targetSection.id,
-        sectionLabel: targetSection.label,
-        sectionRepeatCount: targetSection.repeatCount
-      };
+      const url = isUpdate 
+        ? `/api/chord-charts/${chartData.editingChordId}`
+        : `/api/items/${itemId}/chord-charts`;
+      const method = isUpdate ? 'PUT' : 'POST';
       
-      console.log(`[DEBUG] Chord data with section metadata:`, chartDataWithSection);
+      serverDebug(`${isUpdate ? 'Updating' : 'Creating'} chord chart`, { method, url });
       
-      const response = await fetch(`/api/items/${itemId}/chord-charts`, {
-        method: 'POST',
+      const response = await fetch(url, {
+        method: method,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -1002,50 +1138,148 @@ export const PracticePage = () => {
       }
 
       const savedChart = await response.json();
-      console.log('Chord chart saved successfully:', savedChart);
+      serverInfo('Chord chart saved successfully', { savedChart });
+      
+      // DEBUG: Detailed logging of saved chord data format
+      console.log('DEBUG: Saved chord detailed breakdown:', {
+        id: savedChart.id,
+        title: savedChart.title,
+        fingers: savedChart.fingers,
+        fingersType: typeof savedChart.fingers,
+        fingersLength: savedChart.fingers?.length,
+        barres: savedChart.barres,
+        barresType: typeof savedChart.barres,
+        tuning: savedChart.tuning,
+        startingFret: savedChart.startingFret,
+        numFrets: savedChart.numFrets,
+        numStrings: savedChart.numStrings,
+        openStrings: savedChart.openStrings,
+        mutedStrings: savedChart.mutedStrings
+      });
 
       // Update local state with the saved chart
       setChordCharts(prev => {
         const itemCharts = prev[itemId] || [];
-        return {
-          ...prev,
-          [itemId]: [...itemCharts, savedChart]
-        };
+        
+        if (isUpdate) {
+          // Update existing chord - ensure consistent type comparison
+          const editingId = parseInt(chartData.editingChordId);
+          serverDebug('Updating chordCharts state', { 
+            editingId, 
+            editingChordIdOriginal: chartData.editingChordId,
+            existingChartIds: itemCharts.map(c => ({ id: c.id, type: typeof c.id }))
+          });
+          
+          const updatedCharts = itemCharts.map(chart => {
+            const match = parseInt(chart.id) === editingId;
+            if (match) {
+              serverDebug('Found matching chord to update', { chart: chart.id, editingId });
+              console.log('DEBUG: State update - replacing old chart:', {
+                oldChart: chart,
+                newChart: savedChart,
+                fingersOld: chart.fingers,
+                fingersNew: savedChart.fingers
+              });
+            }
+            return match ? savedChart : chart;
+          });
+          
+          serverDebug('Updated charts result', { 
+            originalCount: itemCharts.length, 
+            updatedCount: updatedCharts.length,
+            foundMatch: updatedCharts.some(c => parseInt(c.id) === editingId)
+          });
+          
+          return {
+            ...prev,
+            [itemId]: updatedCharts
+          };
+        } else {
+          // Add new chord
+          return {
+            ...prev,
+            [itemId]: [...itemCharts, savedChart]
+          };
+        }
       });
 
-      // Also add to the current section (or create a default section if none exists)
+      // Update sections state
       setChordSections(prev => {
         const itemSections = prev[itemId] || [];
         
-        // If no sections exist, create a default one
-        if (itemSections.length === 0) {
+        if (isUpdate) {
+          // Update existing chord in sections - ensure consistent type comparison
+          const editingId = parseInt(chartData.editingChordId);
+          serverDebug('Updating chordSections state', { 
+            editingId,
+            sectionsCount: itemSections.length
+          });
+          
+          const updatedSections = itemSections.map(section => {
+            const updatedChords = section.chords.map(chord => {
+              const match = parseInt(chord.id) === editingId;
+              if (match) {
+                serverDebug('Found matching chord in section', { 
+                  sectionId: section.id, 
+                  sectionLabel: section.label,
+                  chordId: chord.id,
+                  editingId 
+                });
+              }
+              return match ? savedChart : chord;
+            });
+            
+            return {
+              ...section,
+              chords: updatedChords
+            };
+          });
+          
           return {
             ...prev,
-            [itemId]: [{
-              id: 'section-1',
-              label: 'Verse',
-              repeatCount: '',
-              chords: [savedChart]
-            }]
+            [itemId]: updatedSections
+          };
+        } else {
+          // Add new chord to section
+          // If no sections exist, create a default one
+          if (itemSections.length === 0) {
+            return {
+              ...prev,
+              [itemId]: [{
+                id: 'section-1',
+                label: 'Verse',
+                repeatCount: '',
+                chords: [savedChart]
+              }]
+            };
+          }
+          
+          // Add to the last section
+          const updatedSections = [...itemSections];
+          const lastSection = updatedSections[updatedSections.length - 1];
+          lastSection.chords = [...lastSection.chords, savedChart];
+          
+          return {
+            ...prev,
+            [itemId]: updatedSections
           };
         }
-        
-        // Add to the last section
-        const updatedSections = [...itemSections];
-        const lastSection = updatedSections[updatedSections.length - 1];
-        lastSection.chords = [...lastSection.chords, savedChart];
-        
-        return {
-          ...prev,
-          [itemId]: updatedSections
-        };
       });
 
-      // Hide the editor after saving
+      // Force re-render the updated chord chart if this was an update
+      if (isUpdate) {
+        const editingId = parseInt(chartData.editingChordId);
+        setTimeout(() => {
+          forceRerenderChordChart(itemId, editingId);
+        }, 150); // Give state updates time to complete
+      }
+
+      // Hide the editor after saving and clear editing state
       setShowChordEditor(prev => ({
         ...prev,
         [itemId]: false
       }));
+      setEditingChordId(null);
 
     } catch (error) {
       console.error('Error saving chord chart:', error);
@@ -1272,7 +1506,20 @@ export const PracticePage = () => {
                     {isChordsExpanded && (
                       <div className="bg-gray-700 rounded-lg p-4">
                         {/* Display chord sections */}
-                        {getAllSections(routineItem.details?.A).map(section => {
+                        {(() => {
+                          const itemId = routineItem.details?.A;
+                          const sectionsFromState = chordSections[itemId];
+                          const sectionsFromCharts = sectionsFromState ? null : getChordSections(itemId);
+                          const finalSections = sectionsFromState || sectionsFromCharts || [];
+                          
+                          console.log(`[DEBUG] Section source for item ${itemId}:`, {
+                            fromState: !!sectionsFromState,
+                            fromCharts: !!sectionsFromCharts,
+                            finalCount: finalSections.length
+                          });
+                          
+                          return finalSections;
+                        })().map(section => {
                           console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
                           return (
                           <div key={section.id} className="mb-6">
@@ -1371,11 +1618,14 @@ export const PracticePage = () => {
                                     <div className="relative w-full h-32 mx-auto flex items-center justify-center overflow-hidden">
                                       <div 
                                         id={`saved-chord-chart-${routineItem.details?.A}-${chart.id}`} 
+                                        key={`${chart.id}-${forceRenderKey}`}
                                         className="w-full h-full"
                                         ref={el => {
-                                          if (el && !el.querySelector('svg')) {
-                                            // Render the saved chord chart using SVGuitar
-                                            setTimeout(() => renderSavedChordChart(chart, el), 100);
+                                          if (el) {
+                                            // Always clear and re-render when ref is called
+                                            // This happens when the key changes
+                                            el.innerHTML = '';
+                                            setTimeout(() => renderSavedChordChart(chart, el), 50);
                                           }
                                         }}
                                       >
