@@ -186,6 +186,55 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
   };
 
+  // Load existing chord data when editing
+  useEffect(() => {
+    if (editingChordId && itemId) {
+      const loadChordForEditing = async () => {
+        try {
+          setIsLoadingChord(true);
+          const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`);
+          if (response.ok) {
+            const chords = await response.json();
+            const chordToEdit = chords.find(chord => chord.id === editingChordId);
+            
+            if (chordToEdit) {
+              console.log('Loading chord for editing:', chordToEdit);
+              setTitle(chordToEdit.title || '');
+              setStartingFret(chordToEdit.startingFret || 1);
+              setNumFrets(chordToEdit.numFrets || 5);
+              setNumStrings(chordToEdit.numStrings || 6);
+              setTuning(chordToEdit.tuning || defaultTuning);
+              setCapo(chordToEdit.capo || 0);
+              
+              // Load finger positions
+              const fingersData = chordToEdit.fingers || [];
+              const normalizedFingers = fingersData.map(finger => {
+                if (Array.isArray(finger)) {
+                  return finger;
+                }
+                if (finger && typeof finger === 'object' && 'string' in finger && 'fret' in finger) {
+                  return [finger.string, finger.fret];
+                }
+                return finger;
+              });
+              
+              setFingers(normalizedFingers);
+              setBarres(chordToEdit.barres || []);
+              setOpenStrings(new Set(chordToEdit.openStrings || []));
+              setMutedStrings(new Set(chordToEdit.mutedStrings || []));
+            }
+          }
+        } catch (error) {
+          console.error('Error loading chord for editing:', error);
+        } finally {
+          setIsLoadingChord(false);
+        }
+      };
+      
+      loadChordForEditing();
+    }
+  }, [editingChordId, itemId, defaultTuning]);
+
   // Initialize SVGuitar
   useEffect(() => {
     // Load SVGuitar UMD script if not already loaded
