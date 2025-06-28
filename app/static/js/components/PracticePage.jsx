@@ -12,10 +12,9 @@ const debounce = (func, wait) => {
     timeout = setTimeout(later, wait);
   };
 };
-import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
-import { ChevronDown, ChevronRight, Check, Plus, Timer, FileText, RotateCcw, Book, Music } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
 import { serverDebug, serverInfo } from '../utils/logging';
@@ -74,7 +73,7 @@ const formatHoursAndMinutes = (minutes) => {
 };
 
 export const PracticePage = () => {
-  const { routine, loading, error } = useActiveRoutine();
+  const { routine } = useActiveRoutine();
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [activeTimers, setActiveTimers] = useState(new Set());
@@ -138,36 +137,6 @@ export const PracticePage = () => {
   };
 
   // Combined function to get both persisted and temporary sections
-  const getAllSections = (itemId) => {
-    const persistedSections = getChordSections(itemId);
-    const tempSections = chordSections[itemId] || [];
-    
-    console.log(`[DEBUG] getAllSections for ${itemId} - persistedSections:`, persistedSections);
-    console.log(`[DEBUG] getAllSections for ${itemId} - tempSections:`, tempSections);
-    
-    // Create a map of all sections
-    const allSectionsMap = new Map();
-    
-    // Add persisted sections first
-    persistedSections.forEach(section => {
-      console.log(`[DEBUG] Adding persisted section ${section.id}:`, section);
-      allSectionsMap.set(section.id, section);
-    });
-    
-    // Only add temporary sections that don't exist in persisted sections
-    tempSections.forEach(section => {
-      if (!allSectionsMap.has(section.id)) {
-        console.log(`[DEBUG] Adding temp section ${section.id}:`, section);
-        allSectionsMap.set(section.id, section);
-      } else {
-        console.log(`[DEBUG] Skipping temp section ${section.id} (already exists)`);
-      }
-    });
-    
-    const result = Array.from(allSectionsMap.values());
-    console.log(`[DEBUG] getAllSections final result for ${itemId}:`, result);
-    return result;
-  };
 
   // Function to add a new section
   const addNewSection = (itemId, label = 'New Section') => {
@@ -190,69 +159,6 @@ export const PracticePage = () => {
     });
   };
 
-  // Function to update section label or repeat count
-  const updateSection = async (itemId, sectionId, updates) => {
-    console.log('Updating section:', sectionId, updates);
-    
-    // Update the section in local state
-    setChordSections(prev => ({
-      ...prev,
-      [itemId]: (prev[itemId] || []).map(section =>
-        section.id === sectionId ? { ...section, ...updates } : section
-      )
-    }));
-    
-    // Get all chord charts for this section that need to be updated
-    const chartsToUpdate = (chordCharts[itemId] || []).filter(chart => 
-      (chart.sectionId || 'section-1') === sectionId
-    );
-    
-    // Update each chord chart in the backend
-    const updatePromises = chartsToUpdate.map(chart => {
-      const updateData = {};
-      if (updates.label !== undefined) {
-        updateData.sectionLabel = updates.label;
-      }
-      if (updates.repeatCount !== undefined) {
-        updateData.sectionRepeatCount = updates.repeatCount;
-      }
-      
-      return fetch(`/api/chord-charts/${chart.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updateData)
-      }).then(response => {
-        if (!response.ok) {
-          throw new Error(`Failed to update chord chart ${chart.id}`);
-        }
-        return response.json();
-      });
-    });
-    
-    try {
-      await Promise.all(updatePromises);
-      console.log(`Successfully updated ${chartsToUpdate.length} chord charts for section ${sectionId}`);
-      
-      // Update the chord charts in local state with the persisted changes
-      setChordCharts(prev => ({
-        ...prev,
-        [itemId]: (prev[itemId] || []).map(chart => {
-          if ((chart.sectionId || 'section-1') === sectionId) {
-            return {
-              ...chart,
-              sectionLabel: updates.label !== undefined ? updates.label : chart.sectionLabel,
-              sectionRepeatCount: updates.repeatCount !== undefined ? updates.repeatCount : chart.sectionRepeatCount
-            };
-          }
-          return chart;
-        })
-      }));
-      
-    } catch (error) {
-      console.error('Error updating section in backend:', error);
-      // Could show a toast notification here
-    }
-  };
 
   // Debounced version of updateSection for real-time typing
   const debouncedUpdateSection = useCallback(
@@ -903,7 +809,7 @@ export const PracticePage = () => {
     setIsNoteEditorOpen(true);
   };
 
-  const handleNoteSave = async (noteText) => {
+  const handleNoteSave = async () => {
     await fetchNotes(editingNoteItemId);
     setEditingNoteItemId(null);
   };
@@ -1519,7 +1425,7 @@ export const PracticePage = () => {
                           });
                           
                           return finalSections;
-                        })().map(section => {
+                        })().map((section, sectionIndex) => {
                           console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
                           return (
                           <div key={section.id} className="mb-6">
@@ -1556,6 +1462,22 @@ export const PracticePage = () => {
                                 </button>
                               </div>
                             </div>
+
+                            {/* Tuning and capo info - only show on first section */}
+                            {sectionIndex === 0 && (() => {
+                              // Get tuning and capo from first chord in section (they should all be the same)
+                              const firstChord = section.chords[0];
+                              if (!firstChord) return null;
+                              
+                              const tuning = firstChord.tuning || 'EADGBE';
+                              const capo = firstChord.capo || 0;
+                              
+                              return (
+                                <div className="text-center text-white font-bold text-sm mb-3">
+                                  {capo > 0 ? `${tuning} | Capo on ${capo}` : tuning}
+                                </div>
+                              );
+                            })()}
 
                             {/* Chord grid for this section */}
                             {section.chords.length > 0 && (
