@@ -512,17 +512,17 @@ export const PracticePage = () => {
       // Create SVGuitar instance
       const chart = new window.svguitar.SVGuitarChord(container);
       
-      // Configure the chart
+      // Configure the chart with same dimensions as editor for consistency
       const config = {
         strings: actualChartData.numStrings || 6,
         frets: actualChartData.numFrets || 5,
         position: actualChartData.startingFret || 1,
         tuning: [], // Hide tuning labels in the small display
-        width: 150,
-        height: 180,
-        fretSize: 1.0,
-        fingerSize: 0.6,
-        sidePadding: 0.1,
+        width: 220,             // Match editor dimensions
+        height: 310,            // Match editor dimensions
+        fretSize: 1.2,          // Match editor settings
+        fingerSize: 0.55,       // Match editor settings
+        sidePadding: 0.2,       // Match editor settings
         fontFamily: 'Arial'
       };
 
@@ -554,13 +554,13 @@ export const PracticePage = () => {
       // Render the chart
       chart.configure(config).chord(chord).draw();
 
-      // Style the SVG to fit the container
+      // Style the SVG to fit the container - larger dimensions to match editor proportions
       const svg = container.querySelector('svg');
       if (svg) {
         svg.style.width = '100%';
         svg.style.height = '100%';
-        svg.style.maxWidth = '150px';  // Smaller than editor for 4-column grid
-        svg.style.maxHeight = '180px'; // Proportional height
+        svg.style.maxWidth = '180px';  // Restore larger chart size
+        svg.style.maxHeight = '192px'; // Restore larger chart size
         svg.style.position = 'relative'; // Ensure SVG doesn't interfere with absolute positioning
         svg.style.zIndex = '1'; // Keep SVG below the delete button
       }
@@ -1560,17 +1560,17 @@ export const PracticePage = () => {
                             {/* Chord grid for this section */}
                             {section.chords.length > 0 && (
                               <div 
-                                className="grid grid-cols-4 gap-4" 
+                                className="grid grid-cols-5 gap-2" 
                                 style={{
                                   display: 'grid',
-                                  gridTemplateColumns: 'repeat(4, 1fr)',
-                                  gap: '1rem'
+                                  gridTemplateColumns: 'repeat(5, 1fr)',
+                                  gap: '0.5rem'
                                 }}
                               >
                                 {section.chords.map(chart => (
                                   <div 
                                     key={chart.id} 
-                                    className="bg-gray-800 p-3 rounded-lg relative" 
+                                    className="bg-gray-800 p-1 rounded-lg relative" 
                                     style={{
                                       minWidth: '0',
                                       maxWidth: '100%',
@@ -1615,7 +1615,7 @@ export const PracticePage = () => {
                                     >
                                       ×
                                     </button>
-                                    <div className="relative w-full h-32 mx-auto flex items-center justify-center overflow-hidden">
+                                    <div className="relative w-full h-48 mx-auto flex items-center justify-center overflow-hidden">
                                       <div 
                                         id={`saved-chord-chart-${routineItem.details?.A}-${chart.id}`} 
                                         key={`${chart.id}-${forceRenderKey}`}

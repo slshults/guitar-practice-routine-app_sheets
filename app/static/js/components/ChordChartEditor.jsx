@@ -63,6 +63,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const [openStrings, setOpenStrings] = useState(new Set()); // Track open strings (0)
   const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
   const [isLoadingChord, setIsLoadingChord] = useState(false); // Loading state for API requests
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false); // Toggle for advanced settings
 
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
@@ -259,6 +260,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       setBarres([]);
       setOpenStrings(new Set());
       setMutedStrings(new Set());
+      setShowAdvancedSettings(false); // Reset to collapsed for new chords
     }
   }, [editingChordId, itemId, defaultTuning]);
 
@@ -582,95 +584,106 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   return (
     <div className="bg-gray-800 rounded-lg p-4">
       <div className="space-y-4">
-        {/* Basic settings in a row */}
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <div className="text-sm text-blue-400 mb-1">Chord Name</div>
-            <div className="relative">
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onBlur={() => tryAutofill(title)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    tryAutofill(title);
-                  }
-                }}
-                placeholder="Enter chord name (e.g. Am, C7)"
-                className="bg-gray-900"
-                disabled={isLoadingChord}
-              />
-              {isLoadingChord && (
-                <div className="absolute right-2 top-2 text-yellow-400 text-xs">
-                  Loading...
-                </div>
-              )}
+        {/* Chord Name field */}
+        <div>
+          <div className="text-sm text-blue-400 mb-1">Chord Name</div>
+          <div className="relative">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => tryAutofill(title)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  tryAutofill(title);
+                }
+              }}
+              placeholder="Enter chord name (e.g. Am, C7)"
+              className="bg-gray-900"
+              disabled={isLoadingChord}
+            />
+            {isLoadingChord && (
+              <div className="absolute right-2 top-2 text-yellow-400 text-xs">
+                Loading...
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Show more settings toggle */}
+        <div 
+          className="text-sm text-blue-400 hover:underline cursor-pointer"
+          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+        >
+          {showAdvancedSettings ? 'Hide advanced settings...' : 'Show more settings...'}
+        </div>
+
+        {/* Advanced settings - collapsible */}
+        {showAdvancedSettings && (
+          <div className="space-y-4">
+            {/* Basic advanced settings */}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <div className="text-sm text-green-400 mb-1">Tuning</div>
+                <Input
+                  value={tuning}
+                  onChange={(e) => setTuning(e.target.value)}
+                  placeholder="EADGBE"
+                  className="bg-gray-900"
+                />
+              </div>
+              <div>
+                <div className="text-sm text-yellow-400 mb-1">Capo</div>
+                <Input
+                  type="number"
+                  min="0"
+                  max="12"
+                  value={capo}
+                  onChange={(e) => setCapo(parseInt(e.target.value) || 0)}
+                  className="bg-gray-900"
+                />
+              </div>
+              <div>
+                <div className="text-sm text-red-400 mb-1">Starting fret</div>
+                <Input
+                  type="number"
+                  min="1"
+                  max="15"
+                  value={startingFret}
+                  onChange={(e) => setStartingFret(parseInt(e.target.value) || 1)}
+                  className="bg-gray-900"
+                />
+              </div>
+            </div>
+
+            {/* Second row of advanced settings */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-sm text-blue-400 mb-1">Number of frets</div>
+                <Input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={numFrets}
+                  onChange={(e) => setNumFrets(parseInt(e.target.value) || 5)}
+                  className="bg-gray-900"
+                />
+              </div>
+              <div>
+                <div className="text-sm text-red-400 mb-1">Number of strings</div>
+                <Input
+                  type="number"
+                  min="4"
+                  max="12"
+                  value={numStrings}
+                  onChange={(e) => setNumStrings(parseInt(e.target.value) || 6)}
+                  className="bg-gray-900"
+                />
+              </div>
             </div>
           </div>
-          <div>
-            <div className="text-sm text-green-400 mb-1">Tuning</div>
-            <Input
-              value={tuning}
-              onChange={(e) => setTuning(e.target.value)}
-              placeholder="EADGBE"
-              className="bg-gray-900"
-            />
-          </div>
-          <div>
-            <div className="text-sm text-yellow-400 mb-1">Capo</div>
-            <Input
-              type="number"
-              min="0"
-              max="12"
-              value={capo}
-              onChange={(e) => setCapo(parseInt(e.target.value) || 0)}
-              className="bg-gray-900"
-            />
-          </div>
-        </div>
+        )}
 
-        {/* Advanced settings in a row */}
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <div className="text-sm text-red-400 mb-1">Starting fret</div>
-            <Input
-              type="number"
-              min="1"
-              max="24"
-              value={startingFret}
-              onChange={(e) => setStartingFret(parseInt(e.target.value) || 1)}
-              className="bg-gray-900"
-            />
-          </div>
-          <div>
-            <div className="text-sm text-blue-400 mb-1">Number of frets</div>
-            <Input
-              type="number"
-              min="1"
-              max="24"
-              value={numFrets}
-              onChange={(e) => setNumFrets(parseInt(e.target.value) || 5)}
-              className="bg-gray-900"
-            />
-          </div>
-          <div>
-            <div className="text-sm text-red-400 mb-1">Number of strings</div>
-            <Input
-              type="number"
-              min="4"
-              max="12"
-              value={numStrings}
-              onChange={(e) => setNumStrings(parseInt(e.target.value) || 6)}
-              className="bg-gray-900"
-            />
-          </div>
-        </div>
-
-        {/* Show more settings button */}
-        <div className="text-sm text-blue-400 hover:underline cursor-pointer">
-          Show more settings...
-        </div>
 
         {/* Editor and Result sections */}
         <div className="flex gap-8 justify-center">
@@ -727,12 +740,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           </div>
         )}
         
-        {editMode === 'fingers' && (
-          <div className="bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg p-3 text-sm text-blue-200">
-            <div className="font-semibold mb-1">Finger Mode Instructions:</div>
-            <div>Click on frets to place individual finger positions. Click above the nut for open (O) or muted (X) strings.</div>
-          </div>
-        )}
 
         {/* Action buttons */}
         <div className="flex gap-2">
