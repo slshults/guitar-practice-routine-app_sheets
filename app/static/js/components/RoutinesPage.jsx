@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@hooks/useAuth';
-import { usePracticeItems } from '@hooks/usePracticeItems';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
@@ -134,7 +133,7 @@ const SortableInactiveRoutine = React.memo(({ routine, handleActivateRoutine, ha
 
 const RoutinesPage = () => {
   const { isAuthenticated, checking, handleLogout } = useAuth();
-  const { items } = usePracticeItems();
+  const [items, setItems] = useState([]);  // Lazy-loaded when needed
   const [newRoutineName, setNewRoutineName] = useState('');
   const [routines, setRoutines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -183,6 +182,21 @@ const RoutinesPage = () => {
       setLoading(false);
     }
   }, [isAuthenticated]);
+
+  // Lazy-load items only when routine editor is opened
+  const fetchItemsIfNeeded = useCallback(async () => {
+    if (items.length === 0) {
+      try {
+        const response = await fetch('/api/items');
+        if (!response.ok) throw new Error('Failed to fetch items');
+        const itemsData = await response.json();
+        setItems(itemsData);
+      } catch (error) {
+        console.error('Error fetching items:', error);
+        setError(error.message);
+      }
+    }
+  }, [items.length]);
 
   const handleActivateRoutine = useCallback(async (routineId) => {
     try {
@@ -259,8 +273,11 @@ const RoutinesPage = () => {
     }
   }, [newRoutineName, fetchRoutines]);
 
-  const handleEditClick = useCallback((routine) => {
+  const handleEditClick = useCallback(async (routine) => {
     console.log('Editing routine:', routine); // For debugging
+    
+    // Lazy-load items before opening editor
+    await fetchItemsIfNeeded();
     
     // Find the active routine details if this is the active routine
     const routineDetails = routine.active ? {
@@ -278,7 +295,7 @@ const RoutinesPage = () => {
       details: routineDetails
     });
     setIsEditOpen(true);
-  }, [activeRoutineItems]);
+  }, [activeRoutineItems, fetchItemsIfNeeded]);
 
   const handleRoutineChange = useCallback(() => {
     console.log('Routine changed, refreshing list...'); // For debugging

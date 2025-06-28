@@ -14,6 +14,7 @@ const debounce = (func, wait) => {
 };
 import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
+import { useItemDetails } from '@hooks/useItemDetails';
 import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
@@ -74,6 +75,7 @@ const formatHoursAndMinutes = (minutes) => {
 
 export const PracticePage = () => {
   const { routine } = useActiveRoutine();
+  const { fetchItemDetails, getItemDetails, isLoadingItem } = useItemDetails();
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [expandedNotes, setExpandedNotes] = useState(new Set());
   const [activeTimers, setActiveTimers] = useState(new Set());
@@ -429,7 +431,13 @@ export const PracticePage = () => {
         fretSize: 1.2,          // Match editor settings
         fingerSize: 0.55,       // Match editor settings
         sidePadding: 0.2,       // Match editor settings
-        fontFamily: 'Arial'
+        fontFamily: 'Arial',
+        // Dark theme colors
+        color: '#ffffff',           // White finger dots
+        backgroundColor: 'transparent',
+        strokeColor: '#ffffff',     // White grid lines
+        textColor: '#ffffff',       // White text
+        fretLabelColor: '#ffffff'   // White fret labels
       };
 
       // Combine regular fingers with open and muted strings (same as in editor)
@@ -475,82 +483,65 @@ export const PracticePage = () => {
     }
   };
 
-  // Load chord charts from API when routine changes
-  useEffect(() => {
-    const loadChordCharts = async () => {
-      if (!routine?.items?.length) return;
-      
-      try {
-        const chartPromises = routine.items.map(async (item) => {
-          const itemId = item.details?.A;
-          if (!itemId) return null;
-          
-          const response = await fetch(`/api/items/${itemId}/chord-charts`);
-          if (response.ok) {
-            const charts = await response.json();
-            return { itemId, charts };
-          }
-          return null;
-        });
-
-        const results = await Promise.all(chartPromises);
-        const chartsByItem = {};
+  // Lazy-load chord charts only when chord section is expanded
+  const loadChordChartsForItem = async (itemReferenceId) => {
+    // Skip if already loaded
+    if (chordCharts[itemReferenceId]) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/items/${itemReferenceId}/chord-charts`);
+      if (response.ok) {
+        const charts = await response.json();
         
-        results.forEach(result => {
-          if (result) {
-            chartsByItem[result.itemId] = result.charts;
-          }
-        });
-
-        setChordCharts(chartsByItem);
+        // Update chord charts state
+        setChordCharts(prev => ({
+          ...prev,
+          [itemReferenceId]: charts
+        }));
         
         // Build sections from loaded chord charts
-        const sectionsByItem = {};
-        Object.keys(chartsByItem).forEach(itemId => {
-          const charts = chartsByItem[itemId] || [];
+        if (charts.length === 0) {
+          setChordSections(prev => ({
+            ...prev,
+            [itemReferenceId]: []
+          }));
+          return;
+        }
+        
+        // Group chords by their section metadata
+        const sectionMap = new Map();
+        
+        charts.forEach(chart => {
+          const sectionId = chart.sectionId || 'section-1';
+          const sectionLabel = chart.sectionLabel || 'Verse';
+          const sectionRepeatCount = chart.sectionRepeatCount || '';
           
-          if (charts.length === 0) {
-            sectionsByItem[itemId] = [];
-            return;
+          if (!sectionMap.has(sectionId)) {
+            sectionMap.set(sectionId, {
+              id: sectionId,
+              label: sectionLabel,
+              repeatCount: sectionRepeatCount,
+              chords: []
+            });
           }
           
-          // Group chords by their section metadata
-          const sectionMap = new Map();
-          
-          charts.forEach(chart => {
-            const sectionId = chart.sectionId || 'section-1';
-            const sectionLabel = chart.sectionLabel || 'Verse';
-            const sectionRepeatCount = chart.sectionRepeatCount || '';
-            
-            if (!sectionMap.has(sectionId)) {
-              sectionMap.set(sectionId, {
-                id: sectionId,
-                label: sectionLabel,
-                repeatCount: sectionRepeatCount,
-                chords: []
-              });
-            }
-            
-            sectionMap.get(sectionId).chords.push(chart);
-          });
-          
-          // Convert map to array
-          sectionsByItem[itemId] = Array.from(sectionMap.values());
+          sectionMap.get(sectionId).chords.push(chart);
         });
         
-        setChordSections(sectionsByItem);
+        // Update sections state
+        setChordSections(prev => ({
+          ...prev,
+          [itemReferenceId]: Array.from(sectionMap.values())
+        }));
         
-        console.log('[DEBUG] Loaded chord charts and built sections:', {
-          chartsByItem,
-          sectionsByItem
-        });
-      } catch (error) {
-        console.error('Error loading chord charts:', error);
+        console.log('[DEBUG] Loaded chord charts for item:', itemReferenceId, charts.length);
       }
-    };
-
-    loadChordCharts();
-  }, [routine]);
+    } catch (error) {
+      console.error('Error loading chord charts for item:', itemReferenceId, error);
+    }
+  };
   
   const completedItemIds = useMemo(() => {
     if (routine?.items) {
@@ -642,7 +633,7 @@ export const PracticePage = () => {
     };
   }, [activeTimers]);
 
-  // Effect to sync completedItems with completedItemIds when routine changes
+  // Effect to sync completedItems with completedItemIds when routine changes  
   useEffect(() => {
     setCompletedItems(completedItemIds);
   }, [completedItemIds]);
@@ -678,21 +669,28 @@ export const PracticePage = () => {
     });
   }, []);
 
-  // Modify toggleItem to use item details from routine data
-  const toggleItem = (itemId) => {
+  // Modified toggleItem to lazy-load item details when expanding
+  const toggleItem = async (itemId) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
       if (next.has(itemId)) {
         next.delete(itemId);
       } else {
         next.add(itemId);
-        // Get the routine item
+        // Lazy-load item details when expanding
         const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
         if (routineItem) {
-          // Initialize timer using details that are now included
-          initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
-          // Fetch notes when expanding
-          fetchNotes(routineItem['B']);  // Column B is Item ID
+          const itemReferenceId = routineItem['B'];  // Column B is Item ID
+          
+          // Fetch full item details if not already cached
+          fetchItemDetails(itemReferenceId).then(itemDetails => {
+            if (itemDetails) {
+              // Initialize timer using fetched details
+              initTimer(itemId, itemDetails['E'] || 5);  // Column E is Duration
+              // Fetch notes when expanding
+              fetchNotes(itemReferenceId);
+            }
+          });
         }
       }
       return next;
@@ -711,7 +709,10 @@ export const PracticePage = () => {
       // Only initialize timer if it doesn't exist
       if (!timers[itemId]) {
         console.log(`Timer ${itemId} not found, initializing...`);
-        initTimer(itemId, routineItem.details?.['E'] || 5);  // Column E is Duration
+        // Try to get cached item details, fallback to default
+        const itemDetails = getItemDetails(routineItem['B']);
+        const duration = itemDetails?.['E'] || 5;  // Column E is Duration
+        initTimer(itemId, duration);
       } else {
         console.log(`Timer ${itemId} exists with value ${timers[itemId]}`);
       }
@@ -769,9 +770,15 @@ export const PracticePage = () => {
               if (currentIndex < routine.items.length - 1) {
                 const nextItem = routine.items[currentIndex + 1];
                 next.add(nextItem['A']);
-                // Initialize timer and fetch notes for next item
-                initTimer(nextItem['A'], nextItem.details?.['E'] || 5);
-                fetchNotes(nextItem['B']);
+                // Lazy-load details for next item
+                const nextItemReferenceId = nextItem['B'];
+                fetchItemDetails(nextItemReferenceId).then(itemDetails => {
+                  if (itemDetails) {
+                    // Initialize timer and fetch notes for next item
+                    initTimer(nextItem['A'], itemDetails['E'] || 5);
+                    fetchNotes(nextItemReferenceId);
+                  }
+                });
               }
               return next;
             });
@@ -795,7 +802,9 @@ export const PracticePage = () => {
 
     const routineItem = routine.items.find(item => item['A'] === itemId);  // Column A is ID
     if (routineItem) {
-      const duration = routineItem.details?.['E'] || 5;  // Column E is Duration
+      // Try to get cached item details, fallback to default
+      const itemDetails = getItemDetails(routineItem['B']);
+      const duration = itemDetails?.['E'] || 5;  // Column E is Duration
       setTimers(prev => ({
         ...prev,
         [itemId]: duration * 60
@@ -845,24 +854,28 @@ export const PracticePage = () => {
     }
   };
 
-  // Calculate total and completed minutes
+  // Calculate total and completed minutes (simplified for now - may not be exact until items are loaded)
   const { totalMinutes, completedMinutes } = useMemo(() => {
     if (!routine?.items) return { totalMinutes: 0, completedMinutes: 0 };
     
     const total = routine.items.reduce((sum, item) => {
-      const duration = parseInt(item.details?.['E']) || 0;
+      // Try to get cached details, fallback to estimated default
+      const itemDetails = getItemDetails(item['B']);
+      const duration = parseInt(itemDetails?.['E']) || 5; // Default 5 minutes
       return sum + duration;
     }, 0);
     
     const completed = routine.items
       .filter(item => completedItems.has(item['A']))
       .reduce((sum, item) => {
-        const duration = parseInt(item.details?.['E']) || 0;
+        // Try to get cached details, fallback to estimated default
+        const itemDetails = getItemDetails(item['B']);
+        const duration = parseInt(itemDetails?.['E']) || 5; // Default 5 minutes
         return sum + duration;
       }, 0);
     
     return { totalMinutes: total, completedMinutes: completed };
-  }, [routine, completedItems]);
+  }, [routine, completedItems, getItemDetails]);
 
   // Effect to handle chord chart initialization
   useEffect(() => {
@@ -957,6 +970,12 @@ export const PracticePage = () => {
         next.delete(itemId);
       } else {
         next.add(itemId);
+        // Lazy-load chord charts when chord section is expanded
+        const routineItem = routine.items.find(item => item['A'] === itemId);
+        if (routineItem) {
+          const itemReferenceId = routineItem['B'];  // Column B is Item ID
+          loadChordChartsForItem(itemReferenceId);
+        }
       }
       return next;
     });
@@ -1293,11 +1312,18 @@ export const PracticePage = () => {
           const isNotesExpanded = expandedNotes.has(routineItem['A']);
           const isTimerActive = activeTimers.has(routineItem['A']);
           const isCompleted = completedItems.has(routineItem['A']);  // Use routine entry ID for completion state
+          
+          // Get full item details from cache if available, otherwise use defaults
+          const itemDetails = getItemDetails(routineItem['B']);
           const timerValue = timers[routineItem['A']] !== undefined 
             ? timers[routineItem['A']] 
-            : (routineItem.details?.['E'] || 5) * 60;  // Column E is Duration
+            : (itemDetails?.['E'] || 5) * 60;  // Column E is Duration
           const itemNotes = notes[routineItem['B']] || '';
           const isChordsExpanded = expandedChords.has(routineItem['A']);
+          
+          // For collapsed items, use minimal details; for expanded items, use full details or loading state
+          const displayTitle = routineItem.minimalDetails?.['C'] || 'Loading...';
+          const isLoadingDetails = isExpanded && !itemDetails && isLoadingItem(routineItem['B']);
           
           return (
             <div
@@ -1323,11 +1349,12 @@ export const PracticePage = () => {
                     <ChevronRight className="h-5 w-5 text-gray-400" />
                   )}
                   <span className={`text-xl ${isCompleted ? 'line-through text-gray-500' : ''}`}>
-                    {routineItem.details?.['C']}  {/* Column C is Title */}
+                    {displayTitle}
+                    {isLoadingDetails && <span className="text-gray-500 ml-2">(Loading details...)</span>}
                   </span>
                 </div>
                 <div className="flex items-center space-x-4">
-                  {routineItem.details?.['E'] && (  // Column E is Duration
+                  {(itemDetails?.['E'] || isExpanded) && (  // Show timer if duration available or item is expanded
                     <div className="flex items-center space-x-2">
                       <Button
                         variant="ghost"
@@ -1376,7 +1403,7 @@ export const PracticePage = () => {
                       <div className="text-5xl font-mono">
                         {formatTime(timerValue)}
                       </div>
-                      {!isTimerActive && timerValue !== (routineItem.details?.['E'] || 5) * 60 && (  // Column E is Duration
+                      {!isTimerActive && timerValue !== (itemDetails?.['E'] || 5) * 60 && (  // Column E is Duration
                         <button
                           onClick={(e) => resetTimer(routineItem['A'], e)}  // Column A is ID
                           className="flex items-center space-x-2 text-gray-400 hover:text-gray-300 transition-colors"
@@ -1413,21 +1440,22 @@ export const PracticePage = () => {
                       <div className="bg-gray-700 rounded-lg p-4">
                         {/* Display chord sections */}
                         {(() => {
-                          const itemId = routineItem.details?.A;
-                          const sectionsFromState = chordSections[itemId];
-                          const sectionsFromCharts = sectionsFromState ? null : getChordSections(itemId);
+                          // Define itemReferenceId at the top level of this scope
+                          const itemReferenceId = routineItem['B'];  // Column B is Item ID
+                          const sectionsFromState = chordSections[itemReferenceId];
+                          const sectionsFromCharts = sectionsFromState ? null : getChordSections(itemReferenceId);
                           const finalSections = sectionsFromState || sectionsFromCharts || [];
                           
-                          console.log(`[DEBUG] Section source for item ${itemId}:`, {
+                          console.log(`[DEBUG] Section source for item ${itemReferenceId}:`, {
                             fromState: !!sectionsFromState,
                             fromCharts: !!sectionsFromCharts,
                             finalCount: finalSections.length
                           });
                           
-                          return finalSections;
-                        })().map((section, sectionIndex) => {
-                          console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
-                          return (
+                          // Map sections to JSX elements with itemReferenceId in scope
+                          const sections = finalSections.map((section, sectionIndex) => {
+                            console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
+                            return (
                           <div key={section.id} className="mb-6">
                             {/* Section header with label and repeat count */}
                             <div className="flex justify-between items-center mb-3">
@@ -1437,9 +1465,9 @@ export const PracticePage = () => {
                                 value={section.label}
                                 onChange={(e) => {
                                   console.log('Updating section label:', section.id, e.target.value);
-                                  updateSectionLocal(routineItem.details?.A, section.id, { label: e.target.value });
+                                  updateSectionLocal(itemReferenceId, section.id, { label: e.target.value });
                                 }}
-                                className="bg-gray-600 text-white px-2 py-1 rounded text-sm font-semibold"
+                                className="bg-gray-900 text-white px-2 py-1 rounded text-sm font-semibold border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="Section name"
                               />
                               
@@ -1448,13 +1476,13 @@ export const PracticePage = () => {
                                 <input
                                   type="text"
                                   value={section.repeatCount}
-                                  onChange={(e) => updateSectionLocal(routineItem.details?.A, section.id, { repeatCount: e.target.value })}
-                                  className="bg-gray-600 text-white px-2 py-1 rounded text-sm w-6 text-center"
+                                  onChange={(e) => updateSectionLocal(itemReferenceId, section.id, { repeatCount: e.target.value })}
+                                  className="bg-gray-900 text-white px-2 py-1 rounded text-sm w-6 text-center border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                   placeholder="x2"
                                   maxLength="3"
                                 />
                                 <button
-                                  onClick={() => deleteSection(routineItem.details?.A, section.id)}
+                                  onClick={() => deleteSection(itemReferenceId, section.id)}
                                   className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
                                   title="Delete section"
                                 >
@@ -1505,7 +1533,7 @@ export const PracticePage = () => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         console.log('Edit chord chart clicked:', chart.id);
-                                        handleEditChordChart(routineItem.details?.A, chart.id, chart);
+                                        handleEditChordChart(itemReferenceId, chart.id, chart);
                                       }}
                                       className="absolute bottom-1 left-1 w-6 h-6 text-blue-400 hover:text-blue-200 flex items-center justify-center text-sm transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
                                       title="Edit chord chart"
@@ -1524,7 +1552,7 @@ export const PracticePage = () => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         console.log('Delete chord chart clicked:', chart.id);
-                                        handleDeleteChordChart(routineItem.details?.A, chart.id);
+                                        handleDeleteChordChart(itemReferenceId, chart.id);
                                       }}
                                       className="absolute bottom-1 right-1 w-6 h-6 text-red-500 hover:text-red-700 flex items-center justify-center text-lg font-black transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
                                       title="Delete chord chart"
@@ -1539,7 +1567,7 @@ export const PracticePage = () => {
                                     </button>
                                     <div className="relative w-full h-48 mx-auto flex items-center justify-center overflow-hidden">
                                       <div 
-                                        id={`saved-chord-chart-${routineItem.details?.A}-${chart.id}`} 
+                                        id={`saved-chord-chart-${itemReferenceId}-${chart.id}`} 
                                         key={`${chart.id}-${forceRenderKey}`}
                                         className="w-full h-full"
                                         ref={el => {
@@ -1561,39 +1589,47 @@ export const PracticePage = () => {
                             )}
                           </div>
                           );
-                        })}
+                          });
 
-                        {/* Add new section button */}
-                        {/* Toggle for chord editor */}
-                        <Button
-                          variant="outline"
-                          onClick={(e) => toggleChordEditor(routineItem.details?.A, e)}
-                          className="w-full mb-4"
-                        >
-                          {showChordEditor[routineItem.details?.A] ? 'Hide Chord Editor' : 'Add New Chord'}
-                        </Button>
+                          // Return the complete chord chart content including buttons and editor
+                          return (
+                            <>
+                              {sections}
+                              
+                              {/* Add new section button */}
+                              {/* Toggle for chord editor */}
+                              <Button
+                                variant="outline"
+                                onClick={(e) => toggleChordEditor(itemReferenceId, e)}
+                                className="w-full mb-4"
+                              >
+                                {showChordEditor[itemReferenceId] ? 'Hide Chord Editor' : 'Add New Chord'}
+                              </Button>
 
-                        <Button
-                          variant="outline"
-                          onClick={() => addNewSection(routineItem.details?.A)}
-                          className="w-full mb-4 border-gray-600"
-                        >
-                          + Add New Section
-                        </Button>
+                              <Button
+                                variant="outline"
+                                onClick={() => addNewSection(itemReferenceId)}
+                                className="w-full mb-4 border-gray-600"
+                              >
+                                + Add New Section
+                              </Button>
 
-                        {/* Chord editor */}
-                        {showChordEditor[routineItem.details?.A] && (
-                          <ChordChartEditor
-                            itemId={routineItem.details?.A}
-                            defaultTuning={routineItem.details?.H || 'EADGBE'}
-                            editingChordId={editingChordId}
-                            onSave={(chartData) => handleSaveChordChart(routineItem.details?.A, chartData)}
-                            onCancel={() => {
-                              setShowChordEditor(prev => ({ ...prev, [routineItem.details?.A]: false }));
-                              setEditingChordId(null);
-                            }}
-                          />
-                        )}
+                              {/* Chord editor */}
+                              {showChordEditor[itemReferenceId] && (
+                                <ChordChartEditor
+                                  itemId={itemReferenceId}
+                                  defaultTuning={itemDetails?.H || 'EADGBE'}
+                                  editingChordId={editingChordId}
+                                  onSave={(chartData) => handleSaveChordChart(itemReferenceId, chartData)}
+                                  onCancel={() => {
+                                    setShowChordEditor(prev => ({ ...prev, [itemReferenceId]: false }));
+                                    setEditingChordId(null);
+                                  }}
+                                />
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -1640,7 +1676,7 @@ export const PracticePage = () => {
                     <div className="mt-4">
                       <div className="flex items-center justify-between">
                         {/* Songbook folder link */}
-                        {routineItem.details?.['F'] && (
+                        {itemDetails?.['F'] && (
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1649,7 +1685,7 @@ export const PracticePage = () => {
                                 headers: {
                                   'Content-Type': 'application/json',
                                 },
-                                body: JSON.stringify({ path: routineItem.details['F'] })
+                                body: JSON.stringify({ path: itemDetails['F'] })
                               }).catch(err => console.error('Error opening folder:', err));
                             }}
                             className="text-blue-500 hover:text-blue-400 hover:underline flex items-center"
@@ -1659,9 +1695,9 @@ export const PracticePage = () => {
                           </button>
                         )}
                         {/* Tuning */}
-                        {routineItem.details?.['H'] && (
+                        {itemDetails?.['H'] && (
                           <span className="text-sm font-mono font-bold text-gray-400">
-                            {routineItem.details['H']}
+                            {itemDetails['H']}
                           </span>
                         )}
                       </div>

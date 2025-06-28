@@ -30,8 +30,8 @@ export const useAuth = () => {
     // Check auth status immediately
     checkAuth();
     
-    // Set up periodic checks every 5 minutes
-    const interval = setInterval(checkAuth, 5 * 60 * 1000);
+    // Set up periodic checks every 15 minutes (Google OAuth tokens last ~1 hour)
+    const interval = setInterval(checkAuth, 15 * 60 * 1000);
     
     return () => clearInterval(interval);
   }, [checkAuth]);

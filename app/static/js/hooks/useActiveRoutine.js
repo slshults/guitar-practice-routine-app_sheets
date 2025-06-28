@@ -8,7 +8,7 @@ export const useActiveRoutine = () => {
 
   const fetchActiveRoutine = async () => {
     try {
-      const response = await fetch('/api/practice/active-routine');
+      const response = await fetch('/api/practice/active-routine/lightweight');
       if (!response.ok) {
         throw new Error('Failed to fetch active routine');
       }
@@ -26,7 +26,8 @@ export const useActiveRoutine = () => {
         name: data.name,
         items: data.items.map(item => ({
           ...item.routineEntry,
-          details: item.itemDetails
+          // Only include minimal details (title) for collapsed view
+          minimalDetails: item.itemMinimal
         }))
       });
       setError(null);

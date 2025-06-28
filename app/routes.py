@@ -52,6 +52,32 @@ def items():
         app.logger.debug(f"Item creation result: {result}")
         return jsonify(result)
 
+@app.route('/api/items/lightweight', methods=['GET'])
+def items_lightweight():
+    """Get items with minimal data - only ID and Title for the list view"""
+    try:
+        spread = get_spread()
+        
+        # Get only columns A (ID) and C (Title) from Items sheet
+        batch_data = spread.values_batch_get([
+            "Items!A2:D"  # Get ID, Item ID, Title columns
+        ])
+        
+        items_data = batch_data['valueRanges'][0].get('values', [])
+        items = [
+            {
+                'A': r[0] if len(r) > 0 else '',  # ID (column A)
+                'C': r[2] if len(r) > 2 else ''   # Title (column C)
+            }
+            for r in items_data
+        ]
+        
+        return jsonify(items)
+        
+    except Exception as e:
+        app.logger.error(f"Error getting lightweight items: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/items/order', methods=['PUT'])
 def order_items():
     """Update the order of items"""
@@ -650,6 +676,77 @@ def get_active_routine_with_details():
 
     except Exception as e:
         app.logger.error(f"Error getting active routine with details: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/practice/active-routine/lightweight', methods=['GET'])
+def get_active_routine_lightweight():
+    """Get the active routine with minimal data - only titles and basic info for collapsed view."""
+    try:
+        # Get active routine ID
+        active_id = get_active_routine()
+        if not active_id:
+            return jsonify({"active_id": None, "items": []})
+
+        spread = get_spread()
+        
+        # Batch get only essential data - no full item details
+        batch_data = spread.values_batch_get([
+            f"Routines!A2:D",  # Get routine metadata
+            f"{active_id}!A2:D",  # Get routine items
+            "Items!A2:D"  # Get ID, Item ID, and Title (columns A, B, C)
+        ])
+        
+        # Process routine metadata
+        routines_data = batch_data['valueRanges'][0].get('values', [])
+        routine_meta = next((
+            {'A': r[0], 'B': r[1], 'C': r[2], 'D': r[3]} 
+            for r in routines_data 
+            if r[0] == str(active_id)
+        ), None)
+        
+        if not routine_meta:
+            return jsonify({"error": "Active routine not found in Routines sheet"}), 404
+
+        # Process routine items
+        routine_items_data = batch_data['valueRanges'][1].get('values', [])
+        routine_items = [
+            {
+                'A': r[0],  # ID
+                'B': r[1],  # Item ID
+                'C': r[2],  # Order
+                'D': r[3] if len(r) > 3 and r[3] == 'TRUE' else ''  # Completed
+            }
+            for r in routine_items_data
+        ]
+
+        # Process minimal items data (only ID and Title)
+        items_data = batch_data['valueRanges'][2].get('values', [])
+        items_by_id = {
+            r[1]: {  # Index by Item ID (column B) - this is what routine items reference
+                'A': r[0],  # ID (column A)
+                'C': r[2] if len(r) > 2 else '',  # Title (column C)
+            }
+            for r in items_data
+        }
+
+        # Combine routine items with minimal details
+        items_with_minimal_details = []
+        for routine_item in routine_items:
+            item_id = routine_item['B']  # Item ID from routine's column B
+            item_minimal = items_by_id.get(item_id, {})
+            items_with_minimal_details.append({
+                "routineEntry": routine_item,
+                "itemMinimal": item_minimal
+            })
+
+        return jsonify({
+            "active_id": active_id,
+            "name": routine_meta['B'],  # Column B contains the routine name
+            "items": items_with_minimal_details
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error getting lightweight active routine: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 def batch_items(items: List[Dict], batch_size: int = 5) -> List[List[Dict]]:

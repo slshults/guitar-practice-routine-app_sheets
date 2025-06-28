@@ -8,10 +8,10 @@ import { PracticePage } from '@components/PracticePage';
 import NavMenu from '@components/NavMenu';
 import RoutinesPage from '@components/RoutinesPage';
 import ImportsPage from '@components/ImportsPage';
-import { usePracticeItems } from '@hooks/usePracticeItems';
+import { useLightweightItems } from '@hooks/useLightweightItems';
 
 const ItemsPage = () => {
-  const { items, refreshItems } = usePracticeItems();
+  const { items, refreshItems } = useLightweightItems();
   return <PracticeItemsList items={items} onItemsChange={refreshItems} />;
 };
 

@@ -12,7 +12,13 @@ const defaultChartConfig = {
   fontFamily: 'Arial',
   // Key: set explicit dimensions that work well
   width: 220,             // Even larger width for better visibility
-  height: 310             // Even larger height (taller than wide)
+  height: 310,            // Even larger height (taller than wide)
+  // Dark theme colors for visibility
+  color: '#ffffff',           // White finger dots
+  backgroundColor: 'transparent',
+  strokeColor: '#ffffff',     // White grid lines
+  textColor: '#ffffff',       // White text
+  fretLabelColor: '#ffffff'   // White fret labels
 };
 
 // Utility function for API requests with exponential backoff
@@ -712,23 +718,24 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           <Button
             variant={editMode === 'fingers' ? 'default' : 'outline'}
             onClick={() => setEditMode('fingers')}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
+            className={`flex-1 ${
+              editMode === 'fingers' 
+                ? 'bg-blue-700 hover:bg-blue-800 text-white' 
+                : 'bg-black hover:bg-gray-800 text-gray-300 border-gray-600'
+            }`}
           >
             Edit Fingers
           </Button>
           <Button
             variant={editMode === 'barres' ? 'default' : 'outline'}
             onClick={() => setEditMode('barres')}
-            className="flex-1 bg-green-500 hover:bg-green-600 text-white"
+            className={`flex-1 ${
+              editMode === 'barres' 
+                ? 'bg-green-700 hover:bg-green-800 text-white' 
+                : 'bg-black hover:bg-gray-800 text-gray-300 border-gray-600'
+            }`}
           >
             Edit Barres
-          </Button>
-          <Button
-            variant={editMode === 'text' ? 'default' : 'outline'}
-            onClick={() => setEditMode('text')}
-            className="flex-1 border-gray-600"
-          >
-            Edit Text
           </Button>
         </div>
 
