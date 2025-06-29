@@ -429,7 +429,7 @@ export const PracticePage = () => {
         width: 220,             // Match editor dimensions
         height: 310,            // Match editor dimensions
         fretSize: 1.2,          // Match editor settings
-        fingerSize: 0.55,       // Match editor settings
+        fingerSize: 0.65,       // Larger finger size for text visibility (match editor)
         sidePadding: 0.2,       // Match editor settings
         fontFamily: 'Arial',
         // Dark theme colors
@@ -437,7 +437,11 @@ export const PracticePage = () => {
         backgroundColor: 'transparent',
         strokeColor: '#ffffff',     // White grid lines
         textColor: '#ffffff',       // White text
-        fretLabelColor: '#ffffff'   // White fret labels
+        fretLabelColor: '#ffffff',  // White fret labels
+        // Finger text settings (match editor)
+        fingerTextColor: '#000000', // Black text on white dots for contrast
+        fingerTextSize: 24,         // Larger text size for visibility
+        showFingerText: true        // Ensure finger text is enabled
       };
 
       // Combine regular fingers with open and muted strings (same as in editor)

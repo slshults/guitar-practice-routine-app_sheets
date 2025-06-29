@@ -7,7 +7,7 @@ const defaultChartConfig = {
   strings: 6,
   frets: 5,
   fretSize: 1.2,          // Normal fret height for readability
-  fingerSize: 0.55,       // Normal finger size
+  fingerSize: 0.65,       // Slightly larger finger size for text visibility
   sidePadding: 0.2,       // Standard padding
   fontFamily: 'Arial',
   // Key: set explicit dimensions that work well
@@ -18,7 +18,11 @@ const defaultChartConfig = {
   backgroundColor: 'transparent',
   strokeColor: '#ffffff',     // White grid lines
   textColor: '#ffffff',       // White text
-  fretLabelColor: '#ffffff'   // White fret labels
+  fretLabelColor: '#ffffff',  // White fret labels
+  // Finger text settings
+  fingerTextColor: '#000000', // Black text on white dots for contrast
+  fingerTextSize: 24,         // Larger text size for visibility
+  showFingerText: true        // Ensure finger text is enabled
 };
 
 // Utility function for API requests with exponential backoff
@@ -59,7 +63,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const [startingFret, setStartingFret] = useState(1);
   const [numFrets, setNumFrets] = useState(5);
   const [numStrings, setNumStrings] = useState(6);
-  const [editMode, setEditMode] = useState('fingers');
+  const [editMode, setEditMode] = useState('dots');
   const [tuning, setTuning] = useState(defaultTuning);
   const [capo, setCapo] = useState(0);
   
@@ -70,6 +74,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
   const [isLoadingChord, setIsLoadingChord] = useState(false); // Loading state for API requests
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false); // Toggle for advanced settings
+  const [selectedFinger, setSelectedFinger] = useState(null); // Track selected finger for number input [string, fret]
 
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
@@ -310,7 +315,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   };
 
   const handleEditorClick = (event) => {
-    if (editMode !== 'fingers' && editMode !== 'barres') return;
+    if (editMode !== 'dots' && editMode !== 'fingers' && editMode !== 'barres') return;
 
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
@@ -390,8 +395,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       console.log('SVGuitar coordinates:', { svguitarString, svguitarFret });
       
       
-      if (editMode === 'fingers') {
+      if (editMode === 'dots') {
         toggleFinger(svguitarString, svguitarFret);
+      } else if (editMode === 'fingers') {
+        selectFingerForNumbering(svguitarString, svguitarFret);
       } else if (editMode === 'barres') {
         toggleBarre(svguitarString, svguitarFret);
       }
@@ -501,6 +508,39 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
   };
 
+  const selectFingerForNumbering = (string, fret) => {
+    console.log('Selecting finger for numbering:', { string, fret });
+    // First ensure there's a finger at this position
+    const existingFingerIndex = fingers.findIndex(finger => {
+      const [s, f] = finger;
+      return s === string && f === fret;
+    });
+    
+    if (existingFingerIndex === -1) {
+      // No finger here, add one first
+      toggleFinger(string, fret);
+    }
+    
+    // Set this position as selected for number input
+    setSelectedFinger([string, fret]);
+    console.log('Selected finger for numbering:', [string, fret]);
+  };
+
+  const setFingerNumber = (string, fret, number) => {
+    console.log('Setting finger number:', { string, fret, number });
+    
+    setFingers(prev => {
+      return prev.map(finger => {
+        const [s, f] = finger;
+        
+        if (s === string && f === fret) {
+          return [s, f, number];
+        }
+        return finger.length === 3 ? finger : [s, f]; // Keep existing structure for others
+      });
+    });
+  };
+
   const updateCharts = () => {
     console.log('updateCharts called', { editorChartRef: editorChartRef.current, resultChartRef: resultChartRef.current });
     if (!editorChartRef.current || !resultChartRef.current) {
@@ -532,7 +572,9 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       };
 
       console.log('Drawing charts with config:', config, 'chordData:', chordData);
-      console.log('Fingers being sent to SVGuitar:', fingers);
+      console.log('Raw fingers state:', fingers);
+      console.log('AllFingers being sent to SVGuitar:', allFingers);
+      console.log('AllFingers detailed:', JSON.stringify(allFingers));
 
       // Clear previous charts by recreating the chart instances
       // SVGuitar doesn't have a clear() method, so we need to recreate the instances
@@ -586,6 +628,29 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   useEffect(() => {
     updateCharts();
   }, [title, startingFret, numFrets, numStrings, fingers, barres, tuning, openStrings, mutedStrings]);
+
+  // Keyboard event listener for finger numbers
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (editMode !== 'fingers' || !selectedFinger) return;
+      
+      const key = event.key;
+      if (['1', '2', '3', '4'].includes(key)) {
+        const [string, fret] = selectedFinger;
+        setFingerNumber(string, fret, key);
+        setSelectedFinger(null); // Clear selection after setting number
+        event.preventDefault();
+      } else if (key === 'Escape') {
+        setSelectedFinger(null); // Clear selection on escape
+        event.preventDefault();
+      }
+    };
+
+    if (editMode === 'fingers') {
+      document.addEventListener('keydown', handleKeyPress);
+      return () => document.removeEventListener('keydown', handleKeyPress);
+    }
+  }, [editMode, selectedFinger]);
 
   return (
     <div className="bg-gray-800 rounded-lg p-4">
@@ -716,12 +781,23 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         {/* Edit mode buttons */}
         <div className="flex gap-2">
           <Button
+            variant={editMode === 'dots' ? 'default' : 'outline'}
+            onClick={() => setEditMode('dots')}
+            className={`flex-1 ${
+              editMode === 'dots' 
+                ? 'bg-blue-700 hover:bg-blue-800 text-white' 
+                : 'bg-black hover:bg-gray-800 text-gray-300 border border-gray-600'
+            }`}
+          >
+            Edit Dots
+          </Button>
+          <Button
             variant={editMode === 'fingers' ? 'default' : 'outline'}
             onClick={() => setEditMode('fingers')}
             className={`flex-1 ${
               editMode === 'fingers' 
-                ? 'bg-blue-700 hover:bg-blue-800 text-white' 
-                : 'bg-black hover:bg-gray-800 text-gray-300 border-gray-600'
+                ? '!bg-blue-800 hover:!bg-blue-900 !text-white !border !border-blue-600' 
+                : '!bg-black hover:!bg-gray-800 !text-gray-300 !border !border-gray-600'
             }`}
           >
             Edit Fingers
@@ -731,8 +807,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
             onClick={() => setEditMode('barres')}
             className={`flex-1 ${
               editMode === 'barres' 
-                ? 'bg-green-700 hover:bg-green-800 text-white' 
-                : 'bg-black hover:bg-gray-800 text-gray-300 border-gray-600'
+                ? '!bg-green-700 hover:!bg-green-800 !text-white !border !border-green-600' 
+                : '!bg-black hover:!bg-gray-800 !text-gray-300 !border !border-gray-600'
             }`}
           >
             Edit Barres
@@ -747,19 +823,32 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           </div>
         )}
         
+        {editMode === 'fingers' && (
+          <div className="bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg p-3 text-sm text-blue-200">
+            <div className="font-semibold mb-1">Finger Numbers Mode Instructions:</div>
+            <div>Click on a finger position, then press 1-4 keys to assign finger numbers. Press Escape to cancel selection.</div>
+            {selectedFinger && (
+              <div className="mt-2 text-yellow-300">
+                Selected position: String {selectedFinger[0]}, Fret {selectedFinger[1]} - Press 1, 2, 3, or 4
+              </div>
+            )}
+          </div>
+        )}
+        
 
         {/* Action buttons */}
         <div className="flex gap-2">
           <Button 
             onClick={() => {
-              console.log('Saving chord chart with title:', title, {
-                openStrings: Array.from(openStrings),
-                mutedStrings: Array.from(mutedStrings),
-                fingers,
-                barres,
-                editingChordId
-              });
-              onSave({ 
+              console.log('=== CHORD SAVE DEBUG ===');
+              console.log('Saving chord chart with title:', title);
+              console.log('Fingers state before save:', fingers);
+              console.log('Fingers detailed:', JSON.stringify(fingers));
+              console.log('Open strings:', Array.from(openStrings));
+              console.log('Muted strings:', Array.from(mutedStrings));
+              console.log('Editing chord ID:', editingChordId);
+              
+              const saveData = { 
                 title, 
                 startingFret, 
                 numFrets, 
@@ -771,7 +860,13 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 openStrings: Array.from(openStrings),
                 mutedStrings: Array.from(mutedStrings),
                 editingChordId  // Pass this so the save handler knows whether to create or update
-              });
+              };
+              
+              console.log('=== SAVE DATA BEING SENT ===');
+              console.log('Full save data:', JSON.stringify(saveData));
+              console.log('Save data fingers specifically:', JSON.stringify(saveData.fingers));
+              
+              onSave(saveData);
             }} 
             className={`flex-1 ${title.trim() ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
             disabled={!title.trim()}
