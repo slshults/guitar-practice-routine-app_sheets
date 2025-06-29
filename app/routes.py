@@ -359,8 +359,8 @@ def auth_status():
 def authorize():
     """Initiate OAuth flow"""
     creds, flow = get_credentials()
-    if creds:
-        logging.debug("Credentials found, redirecting to index")
+    if creds and creds.valid:
+        logging.debug("Valid credentials found, redirecting to index")
         return redirect(url_for('index'))
     flow.redirect_uri = url_for('oauth2callback', _external=True)
     authorization_url, state = flow.authorization_url(prompt='consent')
