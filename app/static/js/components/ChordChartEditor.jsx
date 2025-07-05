@@ -19,10 +19,10 @@ const defaultChartConfig = {
   strokeColor: '#ffffff',     // White grid lines
   textColor: '#ffffff',       // White text
   fretLabelColor: '#ffffff',  // White fret labels
-  // Finger text settings
+  // Finger text settings - using SVGuitar's correct property names
   fingerTextColor: '#000000', // Black text on white dots for contrast
-  fingerTextSize: 24,         // Larger text size for visibility
-  showFingerText: true        // Ensure finger text is enabled
+  fingerTextSize: 22,         // Slightly smaller text to ensure it fits
+  showFingerText: true        // Ensure finger text is enabled - this is the key setting
 };
 
 // Utility function for API requests with exponential backoff
@@ -64,12 +64,23 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const [numFrets, setNumFrets] = useState(5);
   const [numStrings, setNumStrings] = useState(6);
   const [editMode, setEditMode] = useState('dots');
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    editModeRef.current = editMode;
+    console.log('EditMode ref updated to:', editMode);
+  }, [editMode]);
   const [tuning, setTuning] = useState(defaultTuning);
   const [capo, setCapo] = useState(0);
   
   // Chord data state
   const [fingers, setFingers] = useState([]); // Start with empty chord
   const [barres, setBarres] = useState([]);
+  
+  // Debug barres state changes
+  useEffect(() => {
+    console.log('BARRES STATE CHANGED:', JSON.stringify(barres));
+  }, [barres]);
   const [openStrings, setOpenStrings] = useState(new Set()); // Track open strings (0)
   const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
   const [isLoadingChord, setIsLoadingChord] = useState(false); // Loading state for API requests
@@ -79,6 +90,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   const editorChartRef = useRef(null);
   const resultChartRef = useRef(null);
   const editorContainerRef = useRef(null);
+  const editModeRef = useRef(editMode);
+  const lastChordDataRef = useRef(null);
 
   // Autofill function to copy existing chord fingerings
   const tryAutofill = async (chordName) => {
@@ -187,7 +200,13 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         console.log('Normalized fingers from', fingersData, 'to', normalizedFingers);
         
         setFingers(normalizedFingers);
-        setBarres(chordToUse.barres || []);
+        
+        // Handle barres from autofill - they should be stored correctly already
+        const autofillBarres = chordToUse.barres || [];
+        console.log('Autofill barres:', JSON.stringify(autofillBarres));
+        console.log('Autofill chord startingFret:', chordToUse.startingFret);
+        
+        setBarres(autofillBarres);
         setOpenStrings(new Set(chordToUse.openStrings || []));
         setMutedStrings(new Set(chordToUse.mutedStrings || []));
       }
@@ -217,6 +236,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
             
             if (chordToEdit) {
               console.log('Loading chord for editing:', chordToEdit);
+              console.log('Chord barres from server:', JSON.stringify(chordToEdit.barres));
               setTitle(chordToEdit.title || '');
               setStartingFret(chordToEdit.startingFret || 1);
               setNumFrets(chordToEdit.numFrets || 5);
@@ -238,7 +258,16 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
               
               console.log('Normalized fingers for editing:', normalizedFingers);
               setFingers(normalizedFingers);
-              setBarres(chordToEdit.barres || []);
+              
+              // Handle barres - the stored barre fret numbers might need adjustment
+              // based on the loaded chord's startingFret
+              const loadedBarres = chordToEdit.barres || [];
+              console.log('Loading barres from server:', JSON.stringify(loadedBarres));
+              console.log('Loaded chord startingFret:', chordToEdit.startingFret);
+              
+              // No need to adjust barre fret numbers when loading - they should be stored correctly
+              // The issue was in the display/click detection, not in storage
+              setBarres(loadedBarres);
               setOpenStrings(new Set(chordToEdit.openStrings || []));
               setMutedStrings(new Set(chordToEdit.mutedStrings || []));
             } else {
@@ -289,6 +318,14 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     } else {
       initializeCharts();
     }
+    
+    // Cleanup on unmount
+    return () => {
+      if (currentHandlerRef.current && currentHandlerRef.current.svg) {
+        console.log('Cleaning up event listener on unmount');
+        currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
+      }
+    };
   }, []);
 
   const initializeCharts = () => {
@@ -304,43 +341,135 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
   };
 
+  // Store the current event handler reference
+  const currentHandlerRef = useRef(null);
+  
   const setupEditorInteraction = () => {
-    if (!editorContainerRef.current) return;
+    if (!editorContainerRef.current) {
+      console.log('setupEditorInteraction: No editor container ref');
+      return;
+    }
 
     const svg = editorContainerRef.current.querySelector('svg');
-    if (!svg) return;
+    if (!svg) {
+      console.log('setupEditorInteraction: No SVG found');
+      return;
+    }
 
-    // Add click handler to the editor chart SVG
-    svg.addEventListener('click', handleEditorClick);
+    // Remove the old handler if it exists
+    if (currentHandlerRef.current && currentHandlerRef.current.svg) {
+      console.log('Removing old event listener from previous SVG');
+      currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
+    }
+    
+    // Create a new handler that captures the current context
+    const newHandler = (event) => {
+      const handlerId = Math.random();
+      console.log('Event handler called, id:', handlerId);
+      if (event && event.stopPropagation) {
+        event.stopPropagation(); // Prevent event bubbling
+      }
+      if (event && event.preventDefault) {
+        event.preventDefault();  // Prevent default behavior
+      }
+      handleEditorClick(event);
+      console.log('Event handler finished, id:', handlerId);
+    };
+    
+    // Add the new handler
+    svg.addEventListener('click', newHandler);
+    console.log('setupEditorInteraction: Event listener attached to SVG');
+    
+    // Store reference for cleanup
+    currentHandlerRef.current = { svg, handler: newHandler };
   };
 
   const handleEditorClick = (event) => {
-    if (editMode !== 'dots' && editMode !== 'fingers' && editMode !== 'barres') return;
+    if (!event || !event.currentTarget) {
+      console.error('handleEditorClick called with invalid event');
+      return;
+    }
+    
+    const currentEditMode = editModeRef.current;
+    console.log('=== CLICK DEBUG ===');
+    console.log('handleEditorClick sees editMode from state as:', editMode);
+    console.log('handleEditorClick sees editMode from ref as:', currentEditMode);
+    console.log('typeof currentEditMode:', typeof currentEditMode);
+    if (currentEditMode !== 'dots' && currentEditMode !== 'fingers' && currentEditMode !== 'barres') return;
 
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    
+    // Calculate coordinates relative to the SVG
+    const rawX = event.clientX - rect.left;
+    const rawY = event.clientY - rect.top;
+    
+    // Account for SVG scaling - the SVG viewBox vs actual display size
+    const svgViewBox = svg.viewBox.baseVal;
+    
+    // Check if SVG is ready - if not, retry after a short delay
+    if (!svgViewBox || svgViewBox.width === 0 || svgViewBox.height === 0 || 
+        rect.width === 0 || rect.height === 0) {
+      console.log('SVG not ready yet, retrying in 100ms...', {
+        viewBox: svgViewBox ? { width: svgViewBox.width, height: svgViewBox.height } : null,
+        rect: { width: rect.width, height: rect.height }
+      });
+      
+      // Don't retry - just skip this click
+      console.log('SVG not ready, skipping click');
+      return;
+    }
+    
+    const scaleX = svgViewBox.width / rect.width;
+    const scaleY = svgViewBox.height / rect.height;
+    
+    // Additional safety check for valid scale values
+    if (!isFinite(scaleX) || !isFinite(scaleY)) {
+      console.error('Invalid scale values:', { scaleX, scaleY });
+      return;
+    }
+    
+    const x = rawX * scaleX;
+    const y = rawY * scaleY;
 
-    console.log('Click coordinates:', { x, y, rect });
+    console.log('Click coordinates:', { 
+      rawX, rawY, 
+      scaleX, scaleY, 
+      scaledX: x, scaledY: y, 
+      rect: { width: rect.width, height: rect.height },
+      viewBox: { width: svgViewBox.width, height: svgViewBox.height }
+    });
 
     // SVGuitar layout analysis:
     // - There's padding around the actual fretboard
     // - Strings are vertical lines, frets are horizontal
     // - Frets are the spaces BETWEEN the fret wires, not the wires themselves
     
-    const chartWidth = rect.width;
-    const chartHeight = rect.height;
+    // Use SVG viewBox dimensions for calculations, not display dimensions
+    const chartWidth = svgViewBox.width;
+    const chartHeight = svgViewBox.height;
     
     // Adjusted margins based on SVGuitar's actual layout
     const marginX = chartWidth * 0.15;
-    const marginY = chartHeight * 0.12;
+    
+    // The key fix: Adjust nut area detection based on starting fret
+    // When startingFret > 1, SVGuitar renders with much smaller nut area
+    // because it shows the fret number (e.g., "5fr") instead of full nut
+    const marginY = startingFret > 1 ? chartHeight * 0.05 : chartHeight * 0.12;
+    
     const fretboardWidth = chartWidth - (marginX * 2);
     const fretboardHeight = chartHeight - (marginY * 2);
     
+    console.log('Coordinate calculation params:', {
+      startingFret,
+      marginY,
+      chartHeight,
+      marginYRatio: marginY / chartHeight
+    });
+    
     // Check if click is outside the chart area entirely
     if (x < marginX || x > chartWidth - marginX) {
-      console.log('Click outside chart area horizontally');
+      console.log('Click outside chart area horizontally', { x, marginX, chartWidth });
       return;
     }
     
@@ -358,13 +487,15 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const svguitarString = numStrings - stringIndex; // Flip the order
     
     // Check if click is in the nut area (above the fretboard)
+    // For higher position chords, this area is much smaller
     if (y < marginY) {
-      console.log('Nut area click on string:', svguitarString);
+      console.log('Nut area click on string:', svguitarString, 'y:', y, 'marginY:', marginY);
       toggleNutMarker(svguitarString);
       return;
     }
     
     // Check if click is within fretboard area
+    // Use same adjusted marginY for bottom boundary
     if (y > chartHeight - marginY) {
       console.log('Click below fretboard area');
       return;
@@ -376,6 +507,9 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const relativeY = y - marginY;
     const fretRatio = relativeY / fretboardHeight;
     const fretIndex = Math.floor(fretRatio * numFrets) + 1;
+    
+    // SVGuitar expects fret numbers relative to the startingFret position
+    // So fretIndex is already correct as the relative position
 
     console.log('Calculated:', { 
       stringIndex, 
@@ -387,26 +521,33 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       relativeY, 
       fretboardHeight,
       numStrings, 
-      numFrets 
+      numFrets,
+      startingFret 
     });
 
     if (fretIndex >= 1 && fretIndex <= numFrets) {
-      const svguitarFret = fretIndex;
-      console.log('SVGuitar coordinates:', { svguitarString, svguitarFret });
+      console.log('SVGuitar coordinates:', { svguitarString, fretIndex: fretIndex });
       
+      console.log('About to check editMode conditions. currentEditMode =', currentEditMode, 'type:', typeof currentEditMode);
+      console.log('currentEditMode === "dots":', currentEditMode === 'dots');
+      console.log('currentEditMode === "fingers":', currentEditMode === 'fingers');
+      console.log('currentEditMode === "barres":', currentEditMode === 'barres');
       
-      if (editMode === 'dots') {
-        toggleFinger(svguitarString, svguitarFret);
-      } else if (editMode === 'fingers') {
-        selectFingerForNumbering(svguitarString, svguitarFret);
-      } else if (editMode === 'barres') {
-        toggleBarre(svguitarString, svguitarFret);
+      if (currentEditMode === 'dots') {
+        console.log('Calling toggleFinger');
+        toggleFinger(svguitarString, fretIndex);
+      } else if (currentEditMode === 'fingers') {
+        console.log('Calling selectFingerForNumbering');
+        selectFingerForNumbering(svguitarString, fretIndex);
+      } else if (currentEditMode === 'barres') {
+        console.log('Calling toggleBarre');
+        toggleBarre(svguitarString, fretIndex);
       }
     }
   };
 
   const toggleFinger = (string, fret) => {
-    console.log('toggleFinger called with:', { string, fret });
+    console.log('toggleFinger called with string:', string, 'fret:', fret);
     
     // Remove any nut markers when adding a finger position
     setOpenStrings(prev => {
@@ -478,34 +619,35 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   };
 
   const toggleBarre = (string, fret) => {
-    console.log('toggleBarre called with:', { string, fret });
+    console.log('toggleBarre called with string:', string, 'fret:', fret);
     
-    // Check if there's already a barre at this fret
-    const existingBarreIndex = barres.findIndex(barre => barre.fret === fret);
-    
-    if (existingBarreIndex >= 0) {
-      // Remove existing barre at this fret
-      setBarres(prev => prev.filter((_, index) => index !== existingBarreIndex));
-      console.log('Removed barre at fret', fret);
-    } else {
-      // Add new barre from string 6 to string 1 at this fret
-      const newBarre = {
-        fromString: 6,      // Start from lowest string (6th string)
-        toString: 1,        // End at highest string (1st string)
-        fret: fret,
-        text: '1'           // Default finger number
-      };
+    setBarres(prev => {
+      console.log('Current barres:', JSON.stringify(prev));
+      console.log('Looking for barre at fret:', fret);
+      const existingIndex = prev.findIndex(barre => {
+        console.log('Checking barre:', JSON.stringify(barre), 'fret:', barre.fret, 'vs target fret:', fret);
+        return barre.fret === fret;
+      });
+      console.log('Existing barre index:', existingIndex);
       
-      setBarres(prev => [...prev, newBarre]);
-      console.log('Added barre at fret', fret, ':', newBarre);
-      
-      // Remove any individual finger positions that would conflict with the barre
-      setFingers(prev => prev.filter(([, fingerFret]) => fingerFret !== fret));
-      
-      // Remove any nut markers since barres don't work with open strings
-      setOpenStrings(new Set());
-      setMutedStrings(new Set());
-    }
+      if (existingIndex >= 0) {
+        // Remove existing barre
+        const newBarres = prev.filter((_, index) => index !== existingIndex);
+        console.log('Removing barre, new array:', newBarres);
+        return newBarres;
+      } else {
+        // Add new barre
+        const newBarre = {
+          fromString: 6,
+          toString: 1,
+          fret: fret,
+          text: '1'
+        };
+        const newBarres = [...prev, newBarre];
+        console.log('Adding barre, new array:', JSON.stringify(newBarres));
+        return newBarres;
+      }
+    });
   };
 
   const selectFingerForNumbering = (string, fret) => {
@@ -517,13 +659,37 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     });
     
     if (existingFingerIndex === -1) {
-      // No finger here, add one first
-      toggleFinger(string, fret);
+      // No finger here, add one first but don't trigger re-render immediately
+      console.log('No finger found, adding finger first');
+      
+      // Remove any nut markers when adding a finger position
+      setOpenStrings(prev => {
+        const next = new Set(prev);
+        next.delete(string);
+        return next;
+      });
+      setMutedStrings(prev => {
+        const next = new Set(prev);
+        next.delete(string);
+        return next;
+      });
+      
+      // Add the finger and set it as selected in one batch update
+      setFingers(prev => {
+        const newFingers = [...prev, [string, fret]];
+        console.log('Added finger, new fingers array:', newFingers);
+        return newFingers;
+      });
+      
+      // Set this position as selected for number input
+      setSelectedFinger([string, fret]);
+      console.log('Selected finger for numbering:', [string, fret]);
+    } else {
+      console.log('Found existing finger, selecting it');
+      // Set this position as selected for number input
+      setSelectedFinger([string, fret]);
+      console.log('Selected finger for numbering:', [string, fret]);
     }
-    
-    // Set this position as selected for number input
-    setSelectedFinger([string, fret]);
-    console.log('Selected finger for numbering:', [string, fret]);
   };
 
   const setFingerNumber = (string, fret, number) => {
@@ -545,6 +711,14 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     console.log('updateCharts called', { editorChartRef: editorChartRef.current, resultChartRef: resultChartRef.current });
     if (!editorChartRef.current || !resultChartRef.current) {
       console.log('Charts not ready yet');
+      return;
+    }
+    
+    // If the chart elements don't exist in DOM, recreate them
+    const editorElement = document.querySelector('#editor-chart');
+    const resultElement = document.querySelector('#result-chart');
+    if (!editorElement || !resultElement) {
+      console.log('Chart DOM elements missing, skipping update');
       return;
     }
 
@@ -575,35 +749,60 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       console.log('Raw fingers state:', fingers);
       console.log('AllFingers being sent to SVGuitar:', allFingers);
       console.log('AllFingers detailed:', JSON.stringify(allFingers));
+      console.log('Config showFingerText:', config.showFingerText);
+      console.log('Config fingerTextColor:', config.fingerTextColor);
+      console.log('Config fingerTextSize:', config.fingerTextSize);
 
-      // Clear previous charts by recreating the chart instances
-      // SVGuitar doesn't have a clear() method, so we need to recreate the instances
-      document.querySelector('#editor-chart').innerHTML = '';
-      document.querySelector('#result-chart').innerHTML = '';
+      // Check if chord data or title has actually changed
+      const chartStateString = JSON.stringify({ chordData, title });
+      const hasChanged = chartStateString !== lastChordDataRef.current;
       
-      editorChartRef.current = new window.svguitar.SVGuitarChord('#editor-chart');
-      resultChartRef.current = new window.svguitar.SVGuitarChord('#result-chart');
+      if (hasChanged) {
+        console.log('Chart state changed, redrawing charts');
+        lastChordDataRef.current = chartStateString;
+        
+        // Update existing charts without recreating them
+        editorChartRef.current
+          .configure(config)
+          .chord(chordData)
+          .draw();
 
-      editorChartRef.current
-        .configure(config)
-        .chord(chordData)
-        .draw();
+        resultChartRef.current
+          .configure({
+            ...config,
+            title
+          })
+          .chord(chordData)
+          .draw();
 
-      resultChartRef.current
-        .configure({
-          ...config,
-          title
-        })
-        .chord(chordData)
-        .draw();
-
-      console.log('Charts drawn successfully');
+        console.log('Charts drawn successfully');
+      } else {
+        console.log('Chord data unchanged, skipping redraw');
+      }
       
-      // After drawing, adjust SVG size to fit containers
+      // Add explicit debug output to check if finger text is being applied
       setTimeout(() => {
         const editorSvg = document.querySelector('#editor-chart svg');
         const resultSvg = document.querySelector('#result-chart svg');
         
+        // Check for finger text elements in the SVG
+        if (editorSvg) {
+          const fingerTextElements = editorSvg.querySelectorAll('text[fill="#000000"]');
+          console.log('Found finger text elements in editor SVG:', fingerTextElements.length);
+          fingerTextElements.forEach((el, i) => {
+            console.log(`Finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
+          });
+        }
+        
+        if (resultSvg) {
+          const fingerTextElements = resultSvg.querySelectorAll('text[fill="#000000"]');
+          console.log('Found finger text elements in result SVG:', fingerTextElements.length);
+          fingerTextElements.forEach((el, i) => {
+            console.log(`Finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
+          });
+        }
+        
+        // Style the SVGs
         if (editorSvg) {
           editorSvg.style.width = '100%';
           editorSvg.style.height = '100%';
@@ -618,6 +817,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           resultSvg.style.maxHeight = '320px'; // Match container height h-80
         }
         
+        console.log('Setting up editor interaction after SVG styling');
         setupEditorInteraction();
       }, 100);
     } catch (error) {
@@ -635,7 +835,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       if (editMode !== 'fingers' || !selectedFinger) return;
       
       const key = event.key;
-      if (['1', '2', '3', '4'].includes(key)) {
+      if (['1', '2', '3', '4', '5'].includes(key)) {
         const [string, fret] = selectedFinger;
         setFingerNumber(string, fret, key);
         setSelectedFinger(null); // Clear selection after setting number
@@ -793,7 +993,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           </Button>
           <Button
             variant={editMode === 'fingers' ? 'default' : 'outline'}
-            onClick={() => setEditMode('fingers')}
+            onClick={() => {
+              console.log('Edit Fingers button clicked, setting mode to fingers');
+              setEditMode('fingers');
+            }}
             className={`flex-1 ${
               editMode === 'fingers' 
                 ? '!bg-blue-800 hover:!bg-blue-900 !text-white !border !border-blue-600' 
@@ -826,10 +1029,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         {editMode === 'fingers' && (
           <div className="bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg p-3 text-sm text-blue-200">
             <div className="font-semibold mb-1">Finger Numbers Mode Instructions:</div>
-            <div>Click on a finger position, then press 1-4 keys to assign finger numbers. Press Escape to cancel selection.</div>
+            <div>Click on a finger position, then press 1-5 keys to assign finger numbers (5 = thumb). Press Escape to cancel selection.</div>
             {selectedFinger && (
               <div className="mt-2 text-yellow-300">
-                Selected position: String {selectedFinger[0]}, Fret {selectedFinger[1]} - Press 1, 2, 3, or 4
+                Selected position: String {selectedFinger[0]}, Fret {selectedFinger[1]} - Press 1, 2, 3, 4, or 5
               </div>
             )}
           </div>

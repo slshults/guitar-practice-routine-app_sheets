@@ -472,16 +472,25 @@ export const PracticePage = () => {
       // Render the chart
       chart.configure(config).chord(chord).draw();
 
-      // Style the SVG to fit the container - larger dimensions to match editor proportions
-      const svg = container.querySelector('svg');
-      if (svg) {
-        svg.style.width = '100%';
-        svg.style.height = '100%';
-        svg.style.maxWidth = '180px';  // Restore larger chart size
-        svg.style.maxHeight = '192px'; // Restore larger chart size
-        svg.style.position = 'relative'; // Ensure SVG doesn't interfere with absolute positioning
-        svg.style.zIndex = '1'; // Keep SVG below the delete button
-      }
+      // Check for finger text elements in the rendered SVG
+      setTimeout(() => {
+        const svg = container.querySelector('svg');
+        if (svg) {
+          const fingerTextElements = svg.querySelectorAll('text[fill="#000000"]');
+          console.log('DEBUG: Found finger text elements in saved chart:', fingerTextElements.length);
+          fingerTextElements.forEach((el, i) => {
+            console.log(`DEBUG: Saved chart finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
+          });
+          
+          // Style the SVG to fit the container - larger dimensions to match editor proportions
+          svg.style.width = '100%';
+          svg.style.height = '100%';
+          svg.style.maxWidth = '180px';  // Restore larger chart size
+          svg.style.maxHeight = '192px'; // Restore larger chart size
+          svg.style.position = 'relative'; // Ensure SVG doesn't interfere with absolute positioning
+          svg.style.zIndex = '1'; // Keep SVG below the delete button
+        }
+      }, 50);
     } catch (error) {
       console.error('Error rendering saved chord chart:', error);
     }
@@ -897,13 +906,37 @@ export const PracticePage = () => {
     }
 
     function initializeCharts() {
+      // First, clean up any charts that are no longer needed
+      Object.keys(chordChartRefs.current).forEach(refKey => {
+        const [itemId, chartId] = refKey.split('-').slice(0, 2);
+        
+        // Check if this chart should still exist
+        const shouldExist = expandedChords.has(itemId) && 
+          chordCharts[itemId]?.some(chart => chart.id === chartId);
+        
+        if (!shouldExist) {
+          // Clean up this chart
+          const container = document.getElementById(`chord-chart-${refKey}`);
+          if (container) {
+            container.innerHTML = '';
+          }
+          delete chordChartRefs.current[refKey];
+        }
+      });
+      
+      // Now initialize new charts
       expandedChords.forEach(itemId => {
         // Get all charts for this item
         const itemCharts = chordCharts[itemId] || [];
         
         itemCharts.forEach(chartData => {
+          const refKey = `${itemId}-${chartData.id}`;
           const container = document.getElementById(`chord-chart-${itemId}-${chartData.id}`);
-          if (!container || chordChartRefs.current[`${itemId}-${chartData.id}`]) return;
+          
+          // Skip if container doesn't exist or chart already initialized
+          if (!container || chordChartRefs.current[refKey]) {
+            return;
+          }
 
           try {
             const chart = new window.svguitar.SVGuitarChord(`#chord-chart-${itemId}-${chartData.id}`);
