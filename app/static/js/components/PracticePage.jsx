@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useCallback, useState, useRef, useMemo, memo } from 'react';
 
 // Simple debounce function
 const debounce = (func, wait) => {
@@ -73,6 +73,147 @@ const formatHoursAndMinutes = (minutes) => {
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
 };
 
+// Memoized chord chart component that only re-renders when chord data changes
+const MemoizedChordChart = memo(({ chart, onEdit, onDelete }) => {
+  const chartRef = useRef(null);
+  
+  useEffect(() => {
+    if (!chartRef.current) return;
+    
+    const renderChart = () => {
+      if (!window.svguitar || !chartRef.current) return;
+
+      try {
+        // Handle nested chordData structure if present
+        const actualChartData = chart.chordData || chart;
+        
+        // Clear any existing content
+        chartRef.current.innerHTML = '';
+
+        // Create SVGuitar instance
+        const chartInstance = new window.svguitar.SVGuitarChord(chartRef.current);
+        
+        // Configure the chart with same dimensions as editor for consistency
+        const config = {
+          strings: actualChartData.numStrings || 6,
+          frets: actualChartData.numFrets || 5,
+          position: actualChartData.startingFret || 1,
+          tuning: [], // Hide tuning labels in the small display
+          width: 220,             // Match editor dimensions
+          height: 310,            // Match editor dimensions
+          fretSize: 1.2,          // Match editor settings
+          fingerSize: 0.65,       // Larger finger size for text visibility (match editor)
+          sidePadding: 0.2,       // Match editor settings
+          fontFamily: 'Arial',
+          // Dark theme colors
+          color: '#ffffff',           // White finger dots
+          backgroundColor: 'transparent',
+          strokeColor: '#ffffff',     // White grid lines
+          textColor: '#ffffff',       // White text
+          fretLabelColor: '#ffffff',  // White fret labels
+          // Finger text settings (match editor)
+          fingerTextColor: '#000000', // Black text on white dots for contrast
+          fingerTextSize: 24,         // Larger text size for visibility
+          showFingerText: true        // Ensure finger text is enabled
+        };
+
+        // Combine regular fingers with open and muted strings (same as in editor)
+        const allFingers = [
+          ...(actualChartData.fingers || []),
+          // Add open strings as [string, 0]
+          ...(actualChartData.openStrings || []).map(string => [string, 0]),
+          // Add muted strings as [string, 'x']
+          ...(actualChartData.mutedStrings || []).map(string => [string, 'x'])
+        ];
+
+        // Prepare chord data
+        const chordData = {
+          fingers: allFingers,
+          barres: actualChartData.barres || []
+        };
+
+        // Render the chart
+        chartInstance.configure(config).chord(chordData).draw();
+
+        // Style the SVG to fit the container
+        setTimeout(() => {
+          const svg = chartRef.current?.querySelector('svg');
+          if (svg) {
+            svg.style.width = '100%';
+            svg.style.height = '100%';
+            svg.style.maxWidth = '180px';
+            svg.style.maxHeight = '192px';
+            svg.style.position = 'relative';
+            svg.style.zIndex = '1';
+          }
+        }, 50);
+      } catch (error) {
+        console.error('Error rendering memoized chord chart:', error);
+      }
+    };
+
+    renderChart();
+  }, [chart]); // Only re-render when chart data changes
+
+  return (
+    <div 
+      className="bg-gray-800 p-1 rounded-lg relative" 
+      style={{
+        minWidth: '0',
+        maxWidth: '100%',
+        width: '100%',
+        position: 'relative'
+      }}
+    >
+      {/* Edit button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit(chart.id, chart);
+        }}
+        className="absolute bottom-1 left-1 w-6 h-6 text-blue-400 hover:text-blue-200 flex items-center justify-center text-sm transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
+        title="Edit chord chart"
+        style={{
+          position: 'absolute',
+          bottom: '4px',
+          left: '4px',
+          zIndex: 20
+        }}
+      >
+        ✏️
+      </button>
+
+      {/* Delete button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(chart.id);
+        }}
+        className="absolute bottom-1 right-1 w-6 h-6 text-red-500 hover:text-red-700 flex items-center justify-center text-lg font-black transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
+        title="Delete chord chart"
+        style={{
+          position: 'absolute',
+          bottom: '4px',
+          right: '4px',
+          zIndex: 20
+        }}
+      >
+        ×
+      </button>
+      
+      <div className="relative w-full h-48 mx-auto flex items-center justify-center overflow-hidden">
+        <div 
+          ref={chartRef}
+          className="w-full h-full"
+        >
+          {/* SVGuitar chart will be rendered here */}
+        </div>
+      </div>
+      <div className="text-sm font-semibold mt-2 text-center text-gray-300">{chart.title}</div>
+    </div>
+  );
+});
+
 export const PracticePage = () => {
   const { routine } = useActiveRoutine();
   const { fetchItemDetails, getItemDetails, isLoadingItem } = useItemDetails();
@@ -92,7 +233,6 @@ export const PracticePage = () => {
   const [chordSections, setChordSections] = useState({});
   const [deletingSection, setDeletingSection] = useState(new Set());
   const [editingChordId, setEditingChordId] = useState(null);
-  const [forceRenderKey, setForceRenderKey] = useState(0);
 
   // Helper function to group chords into sections based on persisted metadata
   const getChordSections = (itemId) => {
@@ -355,146 +495,7 @@ export const PracticePage = () => {
     }
   };
 
-  // Function to force re-render a specific chord chart
-  const forceRerenderChordChart = (itemId, chordId) => {
-    console.log(`Force re-rendering chord chart ${chordId} for item ${itemId}`);
-    
-    // Increment the force render key to trigger a React re-mount
-    setForceRenderKey(currentKey => currentKey + 1);
-    
-    // Use a shorter delay and more direct approach
-    setTimeout(() => {
-      const container = document.getElementById(`saved-chord-chart-${itemId}-${chordId}`);
-      if (container) {
-        console.log('Clearing and re-rendering chord chart DOM element');
-        container.innerHTML = ''; // Clear any existing content
-        
-        // Get the updated chart data from current state
-        setChordCharts(currentChords => {
-          const updatedChart = (currentChords[itemId] || []).find(chart => 
-            parseInt(chart.id) === parseInt(chordId)
-          );
-          
-          if (updatedChart) {
-            console.log('Re-rendering with updated chart data:', updatedChart);
-            renderSavedChordChart(updatedChart, container);
-          } else {
-            console.warn(`Chart ${chordId} not found in state for re-render`);
-          }
-          
-          return currentChords; // Don't change state
-        });
-      } else {
-        console.warn(`Container not found for chord chart ${chordId}`);
-      }
-    }, 50); // Shorter delay for more responsive updates
-  };
 
-  // Function to render saved chord charts using SVGuitar
-  const renderSavedChordChart = (chartData, container) => {
-    if (!window.svguitar || !container) return;
-
-    try {
-      // Handle nested chordData structure if present
-      const actualChartData = chartData.chordData || chartData;
-      
-      // Debug logging
-      console.log('DEBUG: renderSavedChordChart called with raw:', JSON.stringify(chartData, null, 2));
-      console.log('DEBUG: Using chart data:', {
-        title: actualChartData.title,
-        fingers: actualChartData.fingers,
-        fingersType: typeof actualChartData.fingers,
-        fingersArray: Array.isArray(actualChartData.fingers),
-        fingersLength: actualChartData.fingers?.length,
-        fingersRaw: JSON.stringify(actualChartData.fingers),
-        openStrings: actualChartData.openStrings,
-        mutedStrings: actualChartData.mutedStrings,
-        barres: actualChartData.barres,
-        startingFret: actualChartData.startingFret,
-        capo: actualChartData.capo
-      });
-
-      // Clear any existing content
-      container.innerHTML = '';
-
-      // Create SVGuitar instance
-      const chart = new window.svguitar.SVGuitarChord(container);
-      
-      // Configure the chart with same dimensions as editor for consistency
-      const config = {
-        strings: actualChartData.numStrings || 6,
-        frets: actualChartData.numFrets || 5,
-        position: actualChartData.startingFret || 1,
-        tuning: [], // Hide tuning labels in the small display
-        width: 220,             // Match editor dimensions
-        height: 310,            // Match editor dimensions
-        fretSize: 1.2,          // Match editor settings
-        fingerSize: 0.65,       // Larger finger size for text visibility (match editor)
-        sidePadding: 0.2,       // Match editor settings
-        fontFamily: 'Arial',
-        // Dark theme colors
-        color: '#ffffff',           // White finger dots
-        backgroundColor: 'transparent',
-        strokeColor: '#ffffff',     // White grid lines
-        textColor: '#ffffff',       // White text
-        fretLabelColor: '#ffffff',  // White fret labels
-        // Finger text settings (match editor)
-        fingerTextColor: '#000000', // Black text on white dots for contrast
-        fingerTextSize: 24,         // Larger text size for visibility
-        showFingerText: true        // Ensure finger text is enabled
-      };
-
-      // Combine regular fingers with open and muted strings (same as in editor)
-      const allFingers = [
-        ...(actualChartData.fingers || []),
-        // Add open strings as [string, 0]
-        ...(actualChartData.openStrings || []).map(string => [string, 0]),
-        // Add muted strings as [string, 'x']
-        ...(actualChartData.mutedStrings || []).map(string => [string, 'x'])
-      ];
-
-      // Prepare chord data
-      const chord = {
-        fingers: allFingers,
-        barres: actualChartData.barres || []
-      };
-      
-      console.log('DEBUG: Final chord data being sent to SVGuitar:', {
-        config,
-        chord,
-        allFingers,
-        originalFingers: actualChartData.fingers,
-        title: actualChartData.title
-      });
-      console.log('DEBUG: Config JSON:', JSON.stringify(config, null, 2));
-      console.log('DEBUG: Chord JSON:', JSON.stringify(chord, null, 2));
-
-      // Render the chart
-      chart.configure(config).chord(chord).draw();
-
-      // Check for finger text elements in the rendered SVG
-      setTimeout(() => {
-        const svg = container.querySelector('svg');
-        if (svg) {
-          const fingerTextElements = svg.querySelectorAll('text[fill="#000000"]');
-          console.log('DEBUG: Found finger text elements in saved chart:', fingerTextElements.length);
-          fingerTextElements.forEach((el, i) => {
-            console.log(`DEBUG: Saved chart finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
-          });
-          
-          // Style the SVG to fit the container - larger dimensions to match editor proportions
-          svg.style.width = '100%';
-          svg.style.height = '100%';
-          svg.style.maxWidth = '180px';  // Restore larger chart size
-          svg.style.maxHeight = '192px'; // Restore larger chart size
-          svg.style.position = 'relative'; // Ensure SVG doesn't interfere with absolute positioning
-          svg.style.zIndex = '1'; // Keep SVG below the delete button
-        }
-      }, 50);
-    } catch (error) {
-      console.error('Error rendering saved chord chart:', error);
-    }
-  };
 
   // Lazy-load chord charts only when chord section is expanded
   const loadChordChartsForItem = async (itemReferenceId) => {
@@ -1228,13 +1229,7 @@ export const PracticePage = () => {
         }
       });
 
-      // Force re-render the updated chord chart if this was an update
-      if (isUpdate) {
-        const editingId = parseInt(chartData.editingChordId);
-        setTimeout(() => {
-          forceRerenderChordChart(itemId, editingId);
-        }, 150); // Give state updates time to complete
-      }
+      // With memoized components, updates will automatically trigger re-renders
 
       // Hide the editor after saving and clear editing state
       setShowChordEditor(prev => ({
@@ -1555,72 +1550,12 @@ export const PracticePage = () => {
                                 }}
                               >
                                 {section.chords.map(chart => (
-                                  <div 
-                                    key={chart.id} 
-                                    className="bg-gray-800 p-1 rounded-lg relative" 
-                                    style={{
-                                      minWidth: '0',
-                                      maxWidth: '100%',
-                                      width: '100%',
-                                      position: 'relative' // Ensure positioning context
-                                    }}
-                                  >
-                                    {/* Edit button */}
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        console.log('Edit chord chart clicked:', chart.id);
-                                        handleEditChordChart(itemReferenceId, chart.id, chart);
-                                      }}
-                                      className="absolute bottom-1 left-1 w-6 h-6 text-blue-400 hover:text-blue-200 flex items-center justify-center text-sm transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
-                                      title="Edit chord chart"
-                                      style={{
-                                        position: 'absolute',
-                                        bottom: '4px',
-                                        left: '4px',
-                                        zIndex: 20
-                                      }}
-                                    >
-                                      ✏️
-                                    </button>
-
-                                    {/* Delete button */}
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        console.log('Delete chord chart clicked:', chart.id);
-                                        handleDeleteChordChart(itemReferenceId, chart.id);
-                                      }}
-                                      className="absolute bottom-1 right-1 w-6 h-6 text-red-500 hover:text-red-700 flex items-center justify-center text-lg font-black transition-colors cursor-pointer z-20 bg-gray-900 bg-opacity-75 rounded shadow-lg"
-                                      title="Delete chord chart"
-                                      style={{
-                                        position: 'absolute',
-                                        bottom: '4px',
-                                        right: '4px',
-                                        zIndex: 20
-                                      }}
-                                    >
-                                      ×
-                                    </button>
-                                    <div className="relative w-full h-48 mx-auto flex items-center justify-center overflow-hidden">
-                                      <div 
-                                        id={`saved-chord-chart-${itemReferenceId}-${chart.id}`} 
-                                        key={`${chart.id}-${forceRenderKey}`}
-                                        className="w-full h-full"
-                                        ref={el => {
-                                          if (el) {
-                                            // Always clear and re-render when ref is called
-                                            // This happens when the key changes
-                                            el.innerHTML = '';
-                                            setTimeout(() => renderSavedChordChart(chart, el), 50);
-                                          }
-                                        }}
-                                      >
-                                        {/* SVGuitar chart will be rendered here */}
-                                      </div>
-                                    </div>
-                                    <div className="text-sm font-semibold mt-2 text-center text-gray-300">{chart.title}</div>
-                                  </div>
+                                  <MemoizedChordChart
+                                    key={chart.id}
+                                    chart={chart}
+                                    onEdit={(chordId, chartData) => handleEditChordChart(itemReferenceId, chordId, chartData)}
+                                    onDelete={(chordId) => handleDeleteChordChart(itemReferenceId, chordId)}
+                                  />
                                 ))}
                               </div>
                             )}
