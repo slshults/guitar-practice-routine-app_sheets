@@ -953,6 +953,11 @@ def get_chord_charts_for_item(item_id):
             try:
                 import json
                 chart_data = json.loads(chart.get('D', '{}'))  # Column D = ChordData
+                
+                # Ensure hasLineBreakAfter field exists for all chords
+                if 'hasLineBreakAfter' not in chart_data:
+                    chart_data['hasLineBreakAfter'] = False
+                
                 parsed_charts.append({
                     'id': chart.get('A'),  # Column A = ChordID
                     'itemId': chart.get('B'),  # Column B = ItemID
@@ -1010,7 +1015,9 @@ def add_chord_chart(item_id, chord_data):
             # Section metadata for chord organization
             'sectionId': chord_data.get('sectionId', None),
             'sectionLabel': chord_data.get('sectionLabel', ''),
-            'sectionRepeatCount': chord_data.get('sectionRepeatCount', '')
+            'sectionRepeatCount': chord_data.get('sectionRepeatCount', ''),
+            # Line break functionality
+            'hasLineBreakAfter': chord_data.get('hasLineBreakAfter', False)
         })
         
         # Create new record
@@ -1211,14 +1218,14 @@ def update_chord_chart(chord_id, chord_data):
         success = records_to_sheet(sheet, records, is_routine_worksheet=False)
         if success:
             invalidate_caches()
-            # Return updated chart data
+            # Return updated chart data (spread chord data to include hasLineBreakAfter)
             return {
                 'id': int(chart_to_update['A']),
                 'itemId': int(chart_to_update['B']),
                 'title': chart_to_update['C'],
-                'chordData': existing_chord_data,
                 'createdAt': chart_to_update['E'],
-                'order': int(float(chart_to_update['F']))
+                'order': int(float(chart_to_update['F'])),
+                **existing_chord_data  # Spread the chord data to include hasLineBreakAfter
             }
             
         return None

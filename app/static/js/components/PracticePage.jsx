@@ -397,6 +397,54 @@ export const PracticePage = () => {
   };
 
   // Function to delete a section using batch delete
+  // Add line break after last chord in section
+  const addLineBreakAfterLastChord = async (itemId, sectionId) => {
+    const sectionCharts = (chordCharts[itemId] || []).filter(chart => 
+      (chart.sectionId || 'section-1') === sectionId
+    );
+    
+    if (sectionCharts.length === 0) {
+      console.log(`No chords in section ${sectionId} to add line break after`);
+      return;
+    }
+    
+    // Sort by order and get the last chord
+    const sortedCharts = sectionCharts.sort((a, b) => (a.order || 0) - (b.order || 0));
+    const lastChord = sortedCharts[sortedCharts.length - 1];
+    
+    console.log(`Adding line break after chord ${lastChord.id} in section ${sectionId}`);
+    
+    try {
+      // Update the chord's hasLineBreakAfter flag
+      const response = await fetch(`/api/chord-charts/${lastChord.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          hasLineBreakAfter: !lastChord.hasLineBreakAfter // Toggle the flag
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: Failed to update line break`);
+      }
+
+      const updatedChord = await response.json();
+      console.log(`Line break toggled for chord ${lastChord.id}:`, updatedChord.hasLineBreakAfter);
+
+      // Update local state
+      setChordCharts(prev => ({
+        ...prev,
+        [itemId]: (prev[itemId] || []).map(chart =>
+          chart.id === lastChord.id ? { ...chart, hasLineBreakAfter: updatedChord.hasLineBreakAfter } : chart
+        )
+      }));
+    } catch (error) {
+      console.error('Error toggling line break:', error);
+    }
+  };
+
   const deleteSection = async (itemId, sectionId) => {
     // Prevent double-clicking/double-triggering
     const sectionKey = `${itemId}-${sectionId}`;
@@ -1503,7 +1551,7 @@ export const PracticePage = () => {
                                 placeholder="Section name"
                               />
                               
-                              {/* Repeat count and section delete */}
+                              {/* Repeat count, line break, and section delete */}
                               <div className="flex items-center gap-2">
                                 <input
                                   type="text"
@@ -1513,6 +1561,13 @@ export const PracticePage = () => {
                                   placeholder="x2"
                                   maxLength="3"
                                 />
+                                <button
+                                  onClick={() => addLineBreakAfterLastChord(itemReferenceId, section.id)}
+                                  className="w-5 h-5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center justify-center text-xs transition-colors"
+                                  title="Add line break after last chord in section"
+                                >
+                                  ↩️
+                                </button>
                                 <button
                                   onClick={() => deleteSection(itemReferenceId, section.id)}
                                   className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
@@ -1541,22 +1596,53 @@ export const PracticePage = () => {
 
                             {/* Chord grid for this section */}
                             {section.chords.length > 0 && (
-                              <div 
-                                className="grid grid-cols-5 gap-2" 
-                                style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: 'repeat(5, 1fr)',
-                                  gap: '0.5rem'
-                                }}
-                              >
-                                {section.chords.map(chart => (
-                                  <MemoizedChordChart
-                                    key={chart.id}
-                                    chart={chart}
-                                    onEdit={(chordId, chartData) => handleEditChordChart(itemReferenceId, chordId, chartData)}
-                                    onDelete={(chordId) => handleDeleteChordChart(itemReferenceId, chordId)}
-                                  />
-                                ))}
+                              <div className="space-y-2">
+                                {(() => {
+                                  // Group chords by line breaks
+                                  const chordRows = [];
+                                  let currentRow = [];
+                                  
+                                  console.log(`[LINEBREAK DEBUG] Processing ${section.chords.length} chords for section ${section.id}`);
+                                  
+                                  section.chords.forEach((chart, index) => {
+                                    currentRow.push(chart);
+                                    
+                                    console.log(`[LINEBREAK DEBUG] Chord ${index + 1} (${chart.title}): hasLineBreakAfter=${chart.hasLineBreakAfter}, currentRow.length=${currentRow.length}`);
+                                    
+                                    // Start new row if:
+                                    // 1. This chord has a line break after it
+                                    // 2. We've reached 5 chords (original behavior)
+                                    // 3. This is the last chord
+                                    if (chart.hasLineBreakAfter || currentRow.length >= 5 || index === section.chords.length - 1) {
+                                      console.log(`[LINEBREAK DEBUG] Creating new row: hasLineBreakAfter=${chart.hasLineBreakAfter}, length=${currentRow.length}, isLast=${index === section.chords.length - 1}`);
+                                      chordRows.push([...currentRow]);
+                                      currentRow = [];
+                                    }
+                                  });
+                                  
+                                  console.log(`[LINEBREAK DEBUG] Final chord rows:`, chordRows.map(row => row.map(c => c.title)));
+                                  
+                                  return chordRows.map((row, rowIndex) => (
+                                    <div 
+                                      key={rowIndex}
+                                      className="grid grid-cols-5 gap-2" 
+                                      style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(5, 1fr)',
+                                        gap: '0.5rem'
+                                      }}
+                                    >
+                                      {row.map(chart => (
+                                        <MemoizedChordChart
+                                          key={chart.id}
+                                          chart={chart}
+                                          onEdit={(chordId, chartData) => handleEditChordChart(itemReferenceId, chordId, chartData)}
+                                          onDelete={(chordId) => handleDeleteChordChart(itemReferenceId, chordId)}
+                                        />
+                                      ))}
+                                    </div>
+                                  ));
+                                })()}
                               </div>
                             )}
                           </div>
