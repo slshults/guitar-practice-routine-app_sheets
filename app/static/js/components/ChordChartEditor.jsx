@@ -7,7 +7,7 @@ const defaultChartConfig = {
   strings: 6,
   frets: 5,
   fretSize: 1.2,          // Normal fret height for readability
-  fingerSize: 0.65,       // Slightly larger finger size for text visibility
+  fingerSize: 0.75,       // Larger finger size for better text visibility
   sidePadding: 0.2,       // Standard padding
   fontFamily: 'Arial',
   // Key: set explicit dimensions that work well
@@ -21,8 +21,7 @@ const defaultChartConfig = {
   fretLabelColor: '#ffffff',  // White fret labels
   // Finger text settings - using SVGuitar's correct property names
   fingerTextColor: '#000000', // Black text on white dots for contrast
-  fingerTextSize: 22,         // Slightly smaller text to ensure it fits
-  showFingerText: true        // Ensure finger text is enabled - this is the key setting
+  fingerTextSize: 28          // Larger text size for better visibility
 };
 
 // Utility function for API requests with exponential backoff
@@ -183,19 +182,23 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         setTuning(chordToUse.tuning || defaultTuning);
         setCapo(chordToUse.capo || 0);
         
-        // Convert finger objects to [string, fret] arrays if needed
+        // Convert finger objects to [string, fret, fingerNumber] arrays if needed
         const fingersData = chordToUse.fingers || [];
         const normalizedFingers = fingersData.map(finger => {
-          // If it's already an array, use as-is
+          // If it's already an array, ensure 3 elements
           if (Array.isArray(finger)) {
-            return finger;
+            const [s, f, num] = finger;
+            return [s, f, num]; // Keep all 3 elements (num might be undefined)
           }
           // If it's an object with string/fret properties, convert to array
           if (finger && typeof finger === 'object' && 'string' in finger && 'fret' in finger) {
-            return [finger.string, finger.fret];
+            // Preserve finger number if it exists
+            const fingerNum = finger.fingerNumber || finger[2];
+            return [finger.string, finger.fret, fingerNum]; // Always 3 elements
           }
-          // Fallback: assume it's already in the right format
-          return finger;
+          // Fallback: assume it's already in the right format but ensure 3 elements
+          const [s, f, num] = Array.isArray(finger) ? finger : [finger[0], finger[1], finger[2]];
+          return [s, f, num];
         });
         console.log('Normalized fingers from', fingersData, 'to', normalizedFingers);
         
@@ -244,16 +247,21 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
               setTuning(chordToEdit.tuning || defaultTuning);
               setCapo(chordToEdit.capo || 0);
               
-              // Load finger positions
+              // Load finger positions (preserve finger numbers)
               const fingersData = chordToEdit.fingers || [];
               const normalizedFingers = fingersData.map(finger => {
                 if (Array.isArray(finger)) {
-                  return finger;
+                  const [s, f, num] = finger;
+                  return [s, f, num]; // Ensure 3 elements (num might be undefined)
                 }
                 if (finger && typeof finger === 'object' && 'string' in finger && 'fret' in finger) {
-                  return [finger.string, finger.fret];
+                  // Preserve finger number if it exists
+                  const fingerNum = finger.fingerNumber || finger[2];
+                  return [finger.string, finger.fret, fingerNum]; // Always 3 elements
                 }
-                return finger;
+                // Fallback: ensure 3 elements
+                const [s, f, num] = Array.isArray(finger) ? finger : [finger[0], finger[1], finger[2]];
+                return [s, f, num];
               });
               
               console.log('Normalized fingers for editing:', normalizedFingers);
@@ -582,8 +590,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         console.log('Removing finger, new array:', newFingers);
         return newFingers;
       } else {
-        // Add new finger
-        const newFingers = [...prev, [string, fret]];
+        // Add new finger with 3-element structure for finger numbering
+        const newFingers = [...prev, [string, fret, undefined]];
         console.log('Adding finger, new array:', newFingers);
         return newFingers;
       }
@@ -676,7 +684,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       
       // Add the finger and set it as selected in one batch update
       setFingers(prev => {
-        const newFingers = [...prev, [string, fret]];
+        const newFingers = [...prev, [string, fret, undefined]];
         console.log('Added finger, new fingers array:', newFingers);
         return newFingers;
       });
@@ -697,12 +705,13 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     
     setFingers(prev => {
       return prev.map(finger => {
-        const [s, f] = finger;
+        const [s, f, currentNumber] = finger;
         
         if (s === string && f === fret) {
           return [s, f, number];
         }
-        return finger.length === 3 ? finger : [s, f]; // Keep existing structure for others
+        // Ensure all fingers have 3-element structure
+        return finger.length === 3 ? finger : [s, f, currentNumber];
       });
     });
   };
@@ -732,8 +741,18 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       };
 
       // Combine regular fingers with open and muted strings
+      // Process fingers to ensure proper finger number format for SVGuitar
+      const processedFingers = fingers.map(finger => {
+        const [string, fret, fingerNumber] = finger;
+        // Only include finger number if it's defined and not empty
+        if (fingerNumber && fingerNumber !== 'undefined') {
+          return [string, fret, fingerNumber];
+        }
+        return [string, fret]; // No finger number
+      });
+      
       const allFingers = [
-        ...fingers,
+        ...processedFingers,
         // Add open strings as [string, 0]
         ...Array.from(openStrings).map(string => [string, 0]),
         // Add muted strings as [string, 'x']
@@ -749,9 +768,13 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       console.log('Raw fingers state:', fingers);
       console.log('AllFingers being sent to SVGuitar:', allFingers);
       console.log('AllFingers detailed:', JSON.stringify(allFingers));
-      console.log('Config showFingerText:', config.showFingerText);
       console.log('Config fingerTextColor:', config.fingerTextColor);
       console.log('Config fingerTextSize:', config.fingerTextSize);
+      
+      // Debug: Check finger structure
+      allFingers.forEach((finger, i) => {
+        console.log(`Finger ${i}:`, finger, 'length:', finger.length, 'has finger number:', finger[2] !== undefined);
+      });
 
       // Check if chord data or title has actually changed
       const chartStateString = JSON.stringify({ chordData, title });

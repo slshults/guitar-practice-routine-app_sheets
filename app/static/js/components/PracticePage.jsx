@@ -102,7 +102,7 @@ const MemoizedChordChart = memo(({ chart, onEdit, onDelete }) => {
           width: 220,             // Match editor dimensions
           height: 310,            // Match editor dimensions
           fretSize: 1.2,          // Match editor settings
-          fingerSize: 0.65,       // Larger finger size for text visibility (match editor)
+          fingerSize: 0.75,       // Larger finger size for text visibility (match editor)
           sidePadding: 0.2,       // Match editor settings
           fontFamily: 'Arial',
           // Dark theme colors
@@ -113,13 +113,22 @@ const MemoizedChordChart = memo(({ chart, onEdit, onDelete }) => {
           fretLabelColor: '#ffffff',  // White fret labels
           // Finger text settings (match editor)
           fingerTextColor: '#000000', // Black text on white dots for contrast
-          fingerTextSize: 24,         // Larger text size for visibility
-          showFingerText: true        // Ensure finger text is enabled
+          fingerTextSize: 28         // Larger text size for visibility (match editor)
         };
 
         // Combine regular fingers with open and muted strings (same as in editor)
+        // Process fingers to ensure proper finger number format for SVGuitar
+        const processedFingers = (actualChartData.fingers || []).map(finger => {
+          const [string, fret, fingerNumber] = finger;
+          // Only include finger number if it's defined and not empty
+          if (fingerNumber && fingerNumber !== 'undefined') {
+            return [string, fret, fingerNumber];
+          }
+          return [string, fret]; // No finger number
+        });
+        
         const allFingers = [
-          ...(actualChartData.fingers || []),
+          ...processedFingers,
           // Add open strings as [string, 0]
           ...(actualChartData.openStrings || []).map(string => [string, 0]),
           // Add muted strings as [string, 'x']
@@ -1602,25 +1611,18 @@ export const PracticePage = () => {
                                   const chordRows = [];
                                   let currentRow = [];
                                   
-                                  console.log(`[LINEBREAK DEBUG] Processing ${section.chords.length} chords for section ${section.id}`);
-                                  
                                   section.chords.forEach((chart, index) => {
                                     currentRow.push(chart);
-                                    
-                                    console.log(`[LINEBREAK DEBUG] Chord ${index + 1} (${chart.title}): hasLineBreakAfter=${chart.hasLineBreakAfter}, currentRow.length=${currentRow.length}`);
                                     
                                     // Start new row if:
                                     // 1. This chord has a line break after it
                                     // 2. We've reached 5 chords (original behavior)
                                     // 3. This is the last chord
                                     if (chart.hasLineBreakAfter || currentRow.length >= 5 || index === section.chords.length - 1) {
-                                      console.log(`[LINEBREAK DEBUG] Creating new row: hasLineBreakAfter=${chart.hasLineBreakAfter}, length=${currentRow.length}, isLast=${index === section.chords.length - 1}`);
                                       chordRows.push([...currentRow]);
                                       currentRow = [];
                                     }
                                   });
-                                  
-                                  console.log(`[LINEBREAK DEBUG] Final chord rows:`, chordRows.map(row => row.map(c => c.title)));
                                   
                                   return chordRows.map((row, rowIndex) => (
                                     <div 
