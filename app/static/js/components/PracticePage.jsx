@@ -405,55 +405,6 @@ export const PracticePage = () => {
     debouncedUpdateSection(itemId, sectionId, updates);
   };
 
-  // Function to delete a section using batch delete
-  // Add line break after last chord in section
-  const addLineBreakAfterLastChord = async (itemId, sectionId) => {
-    const sectionCharts = (chordCharts[itemId] || []).filter(chart => 
-      (chart.sectionId || 'section-1') === sectionId
-    );
-    
-    if (sectionCharts.length === 0) {
-      console.log(`No chords in section ${sectionId} to add line break after`);
-      return;
-    }
-    
-    // Sort by order and get the last chord
-    const sortedCharts = sectionCharts.sort((a, b) => (a.order || 0) - (b.order || 0));
-    const lastChord = sortedCharts[sortedCharts.length - 1];
-    
-    console.log(`Adding line break after chord ${lastChord.id} in section ${sectionId}`);
-    
-    try {
-      // Update the chord's hasLineBreakAfter flag
-      const response = await fetch(`/api/chord-charts/${lastChord.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          hasLineBreakAfter: !lastChord.hasLineBreakAfter // Toggle the flag
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: Failed to update line break`);
-      }
-
-      const updatedChord = await response.json();
-      console.log(`Line break toggled for chord ${lastChord.id}:`, updatedChord.hasLineBreakAfter);
-
-      // Update local state
-      setChordCharts(prev => ({
-        ...prev,
-        [itemId]: (prev[itemId] || []).map(chart =>
-          chart.id === lastChord.id ? { ...chart, hasLineBreakAfter: updatedChord.hasLineBreakAfter } : chart
-        )
-      }));
-    } catch (error) {
-      console.error('Error toggling line break:', error);
-    }
-  };
-
   const deleteSection = async (itemId, sectionId) => {
     // Prevent double-clicking/double-triggering
     const sectionKey = `${itemId}-${sectionId}`;
@@ -1134,6 +1085,61 @@ export const PracticePage = () => {
           sectionLabel: targetSection.label,
           sectionRepeatCount: targetSection.repeatCount
         };
+        
+        // Handle line break before this chord (only for new chords)
+        if (chartData.startOnNewLine) {
+          serverDebug('Processing line break before new chord', { itemId, targetSection: targetSection.id });
+          
+          // Find the last chord in the target section
+          const sectionCharts = (chordCharts[itemId] || []).filter(chart => 
+            (chart.sectionId || 'section-1') === targetSection.id
+          );
+          
+          if (sectionCharts.length > 0) {
+            // Sort by order and get the last chord
+            const sortedCharts = sectionCharts.sort((a, b) => (a.order || 0) - (b.order || 0));
+            const lastChord = sortedCharts[sortedCharts.length - 1];
+            
+            serverDebug('Adding line break after last chord in section', { 
+              lastChordId: lastChord.id,
+              lastChordTitle: lastChord.title 
+            });
+            
+            try {
+              // Update the last chord to have a line break after it
+              const lineBreakResponse = await fetch(`/api/chord-charts/${lastChord.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hasLineBreakAfter: true })
+              });
+
+              if (lineBreakResponse.ok) {
+                const updatedLastChord = await lineBreakResponse.json();
+                serverDebug('Successfully added line break to previous chord', { updatedLastChord });
+                
+                // Update local state immediately
+                setChordCharts(prev => ({
+                  ...prev,
+                  [itemId]: (prev[itemId] || []).map(chart =>
+                    chart.id === lastChord.id ? { ...chart, hasLineBreakAfter: true } : chart
+                  )
+                }));
+                
+                // Give a small delay to ensure state updates have propagated
+                await new Promise(resolve => setTimeout(resolve, 100));
+              } else {
+                serverInfo('Failed to add line break to previous chord', { 
+                  status: lineBreakResponse.status,
+                  statusText: lineBreakResponse.statusText 
+                });
+              }
+            } catch (error) {
+              serverInfo('Error adding line break to previous chord', { error: error.message });
+            }
+          } else {
+            serverDebug('No previous chords in section, line break not needed');
+          }
+        }
       }
       
       serverDebug('Chord data with section metadata', { chartDataWithSection });
@@ -1570,13 +1576,6 @@ export const PracticePage = () => {
                                   placeholder="x2"
                                   maxLength="3"
                                 />
-                                <button
-                                  onClick={() => addLineBreakAfterLastChord(itemReferenceId, section.id)}
-                                  className="w-5 h-5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center justify-center text-xs transition-colors"
-                                  title="Add line break after last chord in section"
-                                >
-                                  ↩️
-                                </button>
                                 <button
                                   onClick={() => deleteSection(itemReferenceId, section.id)}
                                   className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
