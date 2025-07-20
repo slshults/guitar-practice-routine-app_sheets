@@ -213,6 +213,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         setBarres(autofillBarres);
         setOpenStrings(new Set(chordToUse.openStrings || []));
         setMutedStrings(new Set(chordToUse.mutedStrings || []));
+        // IMPORTANT: Never copy line break state during autofill - it's chord-specific, not shape-specific
+        setAddLineBreak(false);
       }
       
     } catch (error) {
@@ -279,6 +281,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
               setBarres(loadedBarres);
               setOpenStrings(new Set(chordToEdit.openStrings || []));
               setMutedStrings(new Set(chordToEdit.mutedStrings || []));
+              setAddLineBreak(chordToEdit.hasLineBreakAfter || false); // Load existing line break status
             } else {
               console.warn(`Chord with ID ${editingChordId} not found in response`);
               console.log('Available chords:', chords.map(c => ({ id: c.id, title: c.title })));
@@ -1063,21 +1066,19 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           </div>
         )}
         
-        {/* Line break option - only for new chords */}
-        {!editingChordId && (
-          <div className="flex items-center space-x-2 bg-gray-700 rounded-lg p-3">
-            <input
-              type="checkbox"
-              id="addLineBreak"
-              checked={addLineBreak}
-              onChange={(e) => setAddLineBreak(e.target.checked)}
-              className="w-4 h-4 text-blue-600 bg-gray-900 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-            />
-            <label htmlFor="addLineBreak" className="text-sm text-gray-300 cursor-pointer">
-              Add line break before this chord ↩️
-            </label>
-          </div>
-        )}
+        {/* Line break option */}
+        <div className="flex items-center space-x-2 bg-gray-700 rounded-lg p-3">
+          <input
+            type="checkbox"
+            id="addLineBreak"
+            checked={addLineBreak}
+            onChange={(e) => setAddLineBreak(e.target.checked)}
+            className="w-4 h-4 text-blue-600 bg-gray-900 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+          />
+          <label htmlFor="addLineBreak" className="text-sm text-gray-300 cursor-pointer">
+            Add line break before this chord ↩️
+          </label>
+        </div>
 
         {/* Action buttons */}
         <div className="flex gap-2">
@@ -1102,7 +1103,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 barres,
                 openStrings: Array.from(openStrings),
                 mutedStrings: Array.from(mutedStrings),
-                startOnNewLine: addLineBreak, // Flag to indicate this chord should start on a new line
+                // Both new and existing chords use startOnNewLine to affect the previous chord
+                startOnNewLine: addLineBreak,
                 editingChordId  // Pass this so the save handler knows whether to create or update
               };
               
