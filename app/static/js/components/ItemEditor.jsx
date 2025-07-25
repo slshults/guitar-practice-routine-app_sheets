@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -33,18 +33,48 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
   // Clear error and load item data when modal opens
   useEffect(() => {
     if (open && item) {
+      // If we have a complete item (with all fields), use it directly
+      if (item['D'] !== undefined || item['H'] !== undefined) {
+        setFormData({
+          'C': item['C'] || '',
+          'D': item['D'] || '',
+          'E': item['E'] || 5,
+          'F': item['F'] || '',
+          'G': item['G'] || '',
+          'H': item['H'] || '',
+        });
+        setError(null);
+        setIsDirty(false);
+      } else {
+        // We have a lightweight item (only ID and Title), need to fetch full data
+        fetchFullItemData(item['A']);
+      }
+    }
+  }, [open, item]);
+
+  const fetchFullItemData = async (itemId) => {
+    try {
+      const response = await fetch(`/api/items/${itemId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch item details');
+      }
+      const fullItem = await response.json();
+      
       setFormData({
-        'C': item['C'] || '',
-        'D': item['D'] || '',
-        'E': item['E'] || 5,
-        'F': item['F'] || '',
-        'G': item['G'] || '',
-        'H': item['H'] || '',
+        'C': fullItem['C'] || '',
+        'D': fullItem['D'] || '',
+        'E': fullItem['E'] || 5,
+        'F': fullItem['F'] || '',
+        'G': fullItem['G'] || '',
+        'H': fullItem['H'] || '',
       });
       setError(null);
       setIsDirty(false);
+    } catch (err) {
+      setError(`Failed to load item: ${err.message}`);
+      console.error('Fetch item error:', err);
     }
-  }, [open, item]);
+  };
 
   const handleFormChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -54,7 +84,7 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const { G, ...dataToSend } = formData;
+      const { G: _G, ...dataToSend } = formData;
       
       // Ensure no trailing slash and handle empty item ID case
       const baseUrl = '/api/items';
