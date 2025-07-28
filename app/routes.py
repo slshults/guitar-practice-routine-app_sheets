@@ -10,7 +10,8 @@ from app.sheets import ( # type: ignore
     records_to_sheet, get_chord_charts_for_item, add_chord_chart, 
     delete_chord_chart, update_chord_chart, update_chord_charts_order,
     get_common_chord_charts, search_common_chord_charts, seed_common_chord_charts, 
-    bulk_import_chords_from_tormodkv, bulk_import_chords_from_local_file
+    bulk_import_chords_from_tormodkv, bulk_import_chords_from_local_file,
+    copy_chord_charts_to_items
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -1400,6 +1401,39 @@ def bulk_import_chords_local_route():
         
     except Exception as e:
         app.logger.error(f"Error in local bulk import: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/chord-charts/copy', methods=['POST'])
+def copy_chord_charts_route():
+    """Copy chord charts from one song to multiple other songs."""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        data = request.json
+        source_item_id = data.get('source_item_id')
+        target_item_ids = data.get('target_item_ids', [])
+        
+        if not source_item_id:
+            return jsonify({"error": "source_item_id is required"}), 400
+            
+        if not target_item_ids or not isinstance(target_item_ids, list):
+            return jsonify({"error": "target_item_ids must be a non-empty array"}), 400
+        
+        app.logger.info(f"Copying chord charts from item {source_item_id} to items {target_item_ids}")
+        
+        result = copy_chord_charts_to_items(source_item_id, target_item_ids)
+        
+        app.logger.info(f"Successfully copied {result['charts_found']} chord charts to {len(result['target_items'])} items")
+        
+        return jsonify({
+            'success': True,
+            'message': f"Copied {result['charts_found']} chord charts to {len(result['target_items'])} songs",
+            'result': result
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error copying chord charts: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/debug/log', methods=['POST'])

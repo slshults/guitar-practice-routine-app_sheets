@@ -941,8 +941,14 @@ def get_chord_charts_for_item(item_id):
         sheet = spread.worksheet('ChordCharts')
         records = sheet_to_records(sheet, is_routine_worksheet=False)
         
-        # Filter by ItemID and sort by Order
-        item_charts = [r for r in records if r.get('B') == str(item_id)]  # Column B = ItemID
+        # Filter by ItemID (handle comma-separated values) and sort by Order
+        item_id_str = str(item_id)
+        item_charts = []
+        for r in records:
+            item_ids = r.get('B', '').split(',')  # Split on comma
+            item_ids = [id.strip() for id in item_ids]  # Remove whitespace
+            if item_id_str in item_ids:
+                item_charts.append(r)
         
         # Sort by Order (column F)
         item_charts.sort(key=lambda x: int(float(x.get('F', 0))))
@@ -1834,3 +1840,58 @@ def bulk_import_chords_from_local_file(chord_names=None, local_file_path=None):
     except Exception as e:
         logging.error(f"Error in local bulk import: {str(e)}")
         raise ValueError(f"Local bulk import failed: {str(e)}")
+
+def copy_chord_charts_to_items(source_item_id, target_item_ids):
+    """Copy chord charts from one song to multiple other songs by updating ItemID column."""
+    try:
+        spread = get_spread()
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        source_item_id_str = str(source_item_id)
+        target_item_ids_str = [str(tid) for tid in target_item_ids]
+        
+        # Find all chord charts that belong to the source item
+        source_charts = []
+        for record in records:
+            item_ids = record.get('B', '').split(',')
+            item_ids = [id.strip() for id in item_ids]
+            if source_item_id_str in item_ids:
+                source_charts.append(record)
+        
+        if not source_charts:
+            logging.warning(f"No chord charts found for source item {source_item_id}")
+            return {'updated': 0, 'charts_found': 0}
+        
+        updated_count = 0
+        
+        # Update each source chart to include the target item IDs
+        for record in source_charts:
+            current_item_ids = record.get('B', '').split(',')
+            current_item_ids = [id.strip() for id in current_item_ids if id.strip()]
+            
+            # Add target item IDs if they're not already present
+            for target_id in target_item_ids_str:
+                if target_id not in current_item_ids:
+                    current_item_ids.append(target_id)
+            
+            # Update the ItemID column with comma-separated list
+            record['B'] = ', '.join(current_item_ids)
+            updated_count += 1
+        
+        # Save updated records
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        if success:
+            invalidate_caches()
+            logging.info(f"Successfully copied {len(source_charts)} chord charts from item {source_item_id} to items {target_item_ids}")
+            return {
+                'updated': updated_count,
+                'charts_found': len(source_charts),
+                'target_items': target_item_ids
+            }
+        else:
+            raise Exception("Failed to save updated chord charts")
+            
+    except Exception as e:
+        logging.error(f"Error copying chord charts: {str(e)}")
+        raise ValueError(f"Failed to copy chord charts: {str(e)}")
