@@ -44,20 +44,13 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null,
 
   // Filter available items based on search query and exclude selected items
   const filteredItems = useMemo(() => {
-    console.log('=== DEBUG START ===');
-    console.log('availableItems from props:', availableItems);
-    console.log('selectedItems from routine:', selectedItems);
     // Get Item IDs from routine entries (column B)
     const selectedItemIds = new Set(selectedItems.map(item => item.itemDetails?.['B'] || item.routineEntry?.['B']));
-    console.log('selectedItemIds:', Array.from(selectedItemIds));
     const filtered = availableItems.filter(item => {
       const isSelected = selectedItemIds.has(item['B']);  // Column B is Item ID
       const matchesSearch = item['C']?.toLowerCase().includes(searchQuery.toLowerCase());  // Column C is Title
-      console.log(`Item ${item['B']}: isSelected=${isSelected}, matchesSearch=${matchesSearch}`);
       return !isSelected && matchesSearch;
     });
-    console.log('filtered items:', filtered);
-    console.log('=== DEBUG END ===');
     return filtered;
   }, [availableItems, selectedItems, searchQuery]);
 
@@ -103,10 +96,6 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null,
 
   const updateRoutineOrder = async (routineId, items) => {
     try {
-      console.log('updateRoutineOrder called with:', {
-        routineId,
-        items
-      });
 
       // Extract only the routine entry data for reordering
       const routineEntries = items.map(item => ({
@@ -114,17 +103,11 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null,
         'C': item['C']           // Order in routine
       }));
 
-      console.log('Sending to backend:', routineEntries);
 
       const response = await fetch(`/api/routines/${routineId}/order`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(routineEntries)
-      });
-
-      console.log('Order update response:', {
-        status: response.status,
-        ok: response.ok
       });
 
       if (!response.ok) {

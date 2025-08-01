@@ -241,6 +241,32 @@ IMPORTANT:
 ### Overview
 The application includes a comprehensive chord chart management system with **section organization** for chord progressions. Users can create labeled sections (Verse, Chorus, etc.) with repeat counts and save chord diagrams within each section.
 
+### Common Regression Fixes
+
+#### Chord Chart Updates Not Visible Until Page Refresh
+**Symptom**: Changes to chord charts (editing, line breaks, etc.) aren't reflected in the UI until the page is refreshed.
+
+**Root Cause**: This happens when the comma-separated ItemID feature breaks the `update_chord_chart` function in `sheets.py`. The function tries to parse corrupted ItemID data like `'71, 101'` as a single integer.
+
+**Fix**: The `update_chord_chart` function in `sheets.py` now handles comma-separated ItemIDs properly:
+```python
+# Handle comma-separated ItemIDs properly - preserve all existing ItemIDs
+item_id_raw = str(chart_to_update['B']).strip()
+
+# For the return value, we need a single ItemID - use the first one
+if ',' in item_id_raw:
+    # Comma-separated ItemIDs - use the first one for the return value
+    first_item_id = item_id_raw.split(',')[0].strip()
+else:
+    first_item_id = item_id_raw
+```
+
+**Key Points**:
+- Chord charts can belong to multiple items via comma-separated ItemIDs in column B
+- When updating a chord chart, preserve all existing ItemIDs 
+- For return values, use the first ItemID from the comma-separated list
+- The `get_chord_charts_for_item` function correctly handles comma-separated ItemIDs
+
 ### Database Schema
 **ChordCharts Sheet:**
 - Column A: ChordID (unique identifier)

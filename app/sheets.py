@@ -997,8 +997,30 @@ def add_chord_chart(item_id, chord_data):
         # Generate new ChordID
         new_id = max([int(float(r.get('A', 0))) for r in records if r.get('A')], default=0) + 1
         
+        # Get all ItemIDs that should be included for this item
+        # Check if any existing chord charts for this item have multiple ItemIDs
+        item_id_str = str(item_id)
+        all_item_ids = set([item_id_str])  # Start with the current item ID
+        
+        # Find all chord charts that include this item ID
+        for record in records:
+            record_item_ids = record.get('B', '').split(',')
+            record_item_ids = [id.strip() for id in record_item_ids if id.strip()]
+            if item_id_str in record_item_ids:
+                # This chart belongs to our item, include all its ItemIDs
+                all_item_ids.update(record_item_ids)
+        
+        # Create comma-separated ItemID string
+        item_ids_str = ', '.join(sorted(all_item_ids))
+        
         # Get max order for this item
-        item_charts = [r for r in records if r.get('B') == str(item_id)]
+        item_charts = []
+        for r in records:
+            record_item_ids = r.get('B', '').split(',')
+            record_item_ids = [id.strip() for id in record_item_ids if id.strip()]
+            if item_id_str in record_item_ids:
+                item_charts.append(r)
+        
         max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
         new_order = max_order + 1
         
@@ -1029,7 +1051,7 @@ def add_chord_chart(item_id, chord_data):
         # Create new record
         new_record = {
             'A': str(new_id),      # ChordID
-            'B': str(item_id),     # ItemID
+            'B': item_ids_str,     # ItemID (comma-separated if shared)
             'C': title,            # Title
             'D': chord_json,       # ChordData
             'E': timestamp,        # CreatedAt
@@ -1225,9 +1247,19 @@ def update_chord_chart(chord_id, chord_data):
         if success:
             invalidate_caches()
             # Return updated chart data (spread chord data to include hasLineBreakAfter)
+            # Handle comma-separated ItemIDs properly - preserve all existing ItemIDs
+            item_id_raw = str(chart_to_update['B']).strip()
+            
+            # For the return value, we need a single ItemID - use the first one
+            if ',' in item_id_raw:
+                # Comma-separated ItemIDs - use the first one for the return value
+                first_item_id = item_id_raw.split(',')[0].strip()
+            else:
+                first_item_id = item_id_raw
+                
             return {
                 'id': int(chart_to_update['A']),
-                'itemId': int(chart_to_update['B']),
+                'itemId': int(first_item_id),
                 'title': chart_to_update['C'],
                 'createdAt': chart_to_update['E'],
                 'order': int(float(chart_to_update['F'])),

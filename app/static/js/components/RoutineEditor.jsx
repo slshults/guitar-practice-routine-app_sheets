@@ -113,7 +113,6 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
 
   // For debugging
   useEffect(() => {
-    console.log('RoutineEditor mounted with routine:', routine);
   }, [routine]);
 
   const sensors = useSensors(
@@ -129,18 +128,14 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
   );
 
   const handleDragEnd = async ({ active, over }) => {
-    console.log('handleDragEnd called with:', { active, over });
     
     if (active.id !== over?.id) {
-      console.log('Active and over IDs are different, proceeding with reorder');
       
       const oldIndex = selectedItems.findIndex(item => item.routineEntry['A'] === active.id);
       const newIndex = selectedItems.findIndex(item => item.routineEntry['A'] === over.id);
-      console.log('Found indices:', { oldIndex, newIndex });
       
       // Create new array with items in new positions
       const reordered = arrayMove(selectedItems, oldIndex, newIndex);
-      console.log('Reordered items:', reordered);
       
       // Update all orders to match new positions
       const withNewOrder = reordered.map((item, index) => ({
@@ -150,27 +145,19 @@ export const RoutineEditor = ({ open, onOpenChange, routine = null, onRoutineCha
       
       // Update local state first for immediate UI feedback
       setSelectedItems(reordered);
-      console.log('Updated local state with:', reordered);
       
       if (routine?.id) {
         try {
-          console.log('Sending order update to backend:', {
-            routineId: routine.id,
-            withNewOrder
-          });
           
           await updateRoutineOrder(routine.id, withNewOrder);
-          console.log('Backend update successful');
         } catch (error) {
           console.error('Failed to update routine order:', error);
           // Revert to previous state on error
           setSelectedItems(selectedItems);
         }
       } else {
-        console.log('No routine id available, skipping backend update');
       }
     } else {
-      console.log('Active and over IDs are the same, no reorder needed');
     }
   };
 

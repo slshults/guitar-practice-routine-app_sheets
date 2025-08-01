@@ -290,7 +290,6 @@ export const PracticePage = () => {
     // Convert map to array and sort by section creation order
     const sections = Array.from(sectionMap.values());
     
-    console.log(`[DEBUG] Final sections for item ${itemId}:`, sections);
     
     return sections;
   };
@@ -1068,9 +1067,6 @@ export const PracticePage = () => {
         const itemSections = chordSections[itemId] || getChordSections(itemId);
         let targetSection;
         
-        serverDebug('Available sections for item', { itemId, itemSections });
-        serverDebug('Current chordCharts state for item', { itemId, chordCharts: chordCharts[itemId] });
-        serverDebug('Current chordSections state for item', { itemId, chordSections: chordSections[itemId] });
         
         if (itemSections.length === 0) {
           // No sections exist, create default
@@ -1084,7 +1080,6 @@ export const PracticePage = () => {
           targetSection = itemSections[itemSections.length - 1];
         }
         
-        serverDebug('Target section for new chord', { targetSection });
         
         // Add section metadata to existing chartDataWithSection
         chartDataWithSection.sectionId = targetSection.id;
@@ -1107,11 +1102,6 @@ export const PracticePage = () => {
           if (editingChordIndex > 0) {
             // Found a chord before the one being edited
             targetChord = allItemCharts[editingChordIndex - 1];
-            serverDebug('Processing line break before existing chord', { 
-              itemId, 
-              editingChordId: chartData.editingChordId,
-              previousChord: { id: targetChord.id, title: targetChord.title }
-            });
           } else {
             serverDebug('No chord before the editing chord, line break not needed');
           }
@@ -1125,11 +1115,6 @@ export const PracticePage = () => {
           if (sectionCharts.length > 0) {
             const sortedCharts = sectionCharts.sort((a, b) => (a.order || 0) - (b.order || 0));
             targetChord = sortedCharts[sortedCharts.length - 1];
-            serverDebug('Processing line break before new chord', { 
-              itemId, 
-              targetSection: targetSection.sectionId,
-              lastChordInSection: { id: targetChord.id, title: targetChord.title }
-            });
           } else {
             serverDebug('No previous chords in section, line break not needed');
           }
@@ -1137,10 +1122,6 @@ export const PracticePage = () => {
         
         // Apply the line break if we found a target chord
         if (targetChord) {
-          serverDebug('Adding line break after target chord', { 
-            targetChordId: targetChord.id,
-            targetChordTitle: targetChord.title 
-          });
           
           try {
             // Update the target chord to have a line break after it
@@ -1152,7 +1133,6 @@ export const PracticePage = () => {
 
             if (lineBreakResponse.ok) {
               const updatedTargetChord = await lineBreakResponse.json();
-              serverDebug('Successfully added line break to target chord', { updatedTargetChord });
               
               // Create a function to update state with line break that can be reused
               const updateStateWithLineBreak = (currentCharts) => {
@@ -1714,15 +1694,8 @@ export const PracticePage = () => {
                           const sectionsFromCharts = sectionsFromState ? null : getChordSections(itemReferenceId);
                           const finalSections = sectionsFromState || sectionsFromCharts || [];
                           
-                          console.log(`[DEBUG] Section source for item ${itemReferenceId}:`, {
-                            fromState: !!sectionsFromState,
-                            fromCharts: !!sectionsFromCharts,
-                            finalCount: finalSections.length
-                          });
-                          
                           // Map sections to JSX elements with itemReferenceId in scope
                           const sections = finalSections.map((section, sectionIndex) => {
-                            console.log(`[DEBUG] Rendering section ${section.id} with ${section.chords.length} chords:`, section.chords.map(c => ({ id: c.id, title: c.title, sectionId: c.sectionId })));
                             return (
                           <div key={section.id} className="mb-6">
                             {/* Section header with label and repeat count */}

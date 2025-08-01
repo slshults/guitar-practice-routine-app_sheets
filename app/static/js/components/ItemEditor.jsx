@@ -90,7 +90,6 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
       const baseUrl = '/api/items';
       const url = item?.['A'] ? `${baseUrl}/${item['A']}` : baseUrl;
       
-      console.log("Sending request to:", url);
       const response = await fetch(url, {
         method: item ? 'PUT' : 'POST',
         headers: {

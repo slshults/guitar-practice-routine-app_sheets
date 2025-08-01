@@ -1,7 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-
-import { Button } from '@ui/button';
-import { Input } from '@ui/input';
+import { useState, useEffect, useRef } from 'react';
 
 const defaultChartConfig = {
   strings: 6,
@@ -34,7 +31,6 @@ const fetchWithBackoff = async (url, options = {}, maxRetries = 3, onRetry = nul
       if (response.status === 429) {
         const waitTime = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
         const message = `Rate limited. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${maxRetries}`;
-        console.log(message);
         
         if (onRetry) onRetry(message);
         await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -47,7 +43,6 @@ const fetchWithBackoff = async (url, options = {}, maxRetries = 3, onRetry = nul
       
       const waitTime = Math.pow(2, attempt) * 1000;
       const message = `Request failed. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${maxRetries}`;
-      console.log(message);
       
       if (onRetry) onRetry(message);
       await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -67,7 +62,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   // Keep ref in sync with state
   useEffect(() => {
     editModeRef.current = editMode;
-    console.log('EditMode ref updated to:', editMode);
   }, [editMode]);
   const [tuning, setTuning] = useState(defaultTuning);
   const [capo, setCapo] = useState(0);
@@ -78,7 +72,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   
   // Debug barres state changes
   useEffect(() => {
-    console.log('BARRES STATE CHANGED:', JSON.stringify(barres));
   }, [barres]);
   const [openStrings, setOpenStrings] = useState(new Set()); // Track open strings (0)
   const [mutedStrings, setMutedStrings] = useState(new Set()); // Track muted strings (x)
@@ -99,13 +92,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     
     try {
       setIsLoadingChord(true);
-      console.log(`Trying autofill for chord: "${chordName}"`);
       
       // Fetch existing chord charts for this item
-      const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`, {}, 3, 
-        (message) => console.log(`Loading: ${message}`));
+      const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`, {}, 3, 1000);
       if (!response.ok) {
-        console.log(`Failed to fetch chord charts: ${response.status}`);
         return;
       }
       
@@ -119,34 +109,27 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       let chordToUse;
       
       if (matches.length === 0) {
-        console.log(`No existing chord found for "${chordName}", checking common chords...`);
         
         // Fallback: Search common chords database for specific chord
         try {
-          console.log(`Searching common chords for: ${chordName}`);
           
           // Add a reasonable delay to avoid rapid API calls
           await new Promise(resolve => setTimeout(resolve, 1000));
           
-          const searchResponse = await fetchWithBackoff(`/api/chord-charts/common/search?name=${encodeURIComponent(chordName)}`, {}, 3,
-            (message) => console.log(`Searching common chords: ${message}`));
+          const searchResponse = await fetchWithBackoff(`/api/chord-charts/common/search?name=${encodeURIComponent(chordName)}`, {}, 3, 1000);
           
           if (searchResponse.ok) {
             const commonMatches = await searchResponse.json();
-            console.log(`Found ${commonMatches.length} matching common chords for "${chordName}"`);
             
             // commonMatches is already filtered by the backend
             
             if (commonMatches.length > 0) {
               // Use the first common chord match (they should be curated)
               chordToUse = commonMatches[0];
-              console.log(`Found common chord for "${chordName}", auto-filling from database...`);
             } else {
-              console.log(`No common chord found for "${chordName}"`);
               // Don't return early - let the finally block clean up
             }
           } else {
-            console.log(`Failed to search common chords: ${searchResponse.status} ${searchResponse.statusText}`);
             // Don't fail completely - let the finally block clean up
           }
         } catch (commonError) {
@@ -157,10 +140,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         // Found existing chords for this item
         if (matches.length === 1) {
           chordToUse = matches[0];
-          console.log(`Found 1 match for "${chordName}", auto-filling...`);
         } else {
           // Multiple matches - use the most recent one (highest order/ID)
-          console.log(`Found ${matches.length} matches for "${chordName}", using most recent version`);
           // Sort by order (or ID if order is the same) and take the last one
           matches.sort((a, b) => {
             const orderA = parseInt(a.order) || 0;
@@ -170,13 +151,11 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
             return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
           });
           chordToUse = matches[matches.length - 1]; // Take the last (most recent)
-          console.log(`Using chord with ID ${chordToUse.id} (order: ${chordToUse.order})`);
         }
       }
       
       // Populate editor with existing chord data
       if (chordToUse) {
-        console.log('Autofilling with chord data:', chordToUse);
         setStartingFret(chordToUse.startingFret || 1);
         setNumFrets(chordToUse.numFrets || 5);
         setNumStrings(chordToUse.numStrings || 6);
@@ -201,14 +180,11 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           const [s, f, num] = Array.isArray(finger) ? finger : [finger[0], finger[1], finger[2]];
           return [s, f, num];
         });
-        console.log('Normalized fingers from', fingersData, 'to', normalizedFingers);
         
         setFingers(normalizedFingers);
         
         // Handle barres from autofill - they should be stored correctly already
         const autofillBarres = chordToUse.barres || [];
-        console.log('Autofill barres:', JSON.stringify(autofillBarres));
-        console.log('Autofill chord startingFret:', chordToUse.startingFret);
         
         setBarres(autofillBarres);
         setOpenStrings(new Set(chordToUse.openStrings || []));
@@ -230,7 +206,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       const loadChordForEditing = async () => {
         try {
           setIsLoadingChord(true);
-          console.log(`Loading chord ${editingChordId} for editing from item ${itemId}`);
           
           const response = await fetchWithBackoff(`/api/items/${itemId}/chord-charts`);
           if (response.ok) {
@@ -241,8 +216,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
             );
             
             if (chordToEdit) {
-              console.log('Loading chord for editing:', chordToEdit);
-              console.log('Chord barres from server:', JSON.stringify(chordToEdit.barres));
               setTitle(chordToEdit.title || '');
               setStartingFret(chordToEdit.startingFret || 1);
               setNumFrets(chordToEdit.numFrets || 5);
@@ -267,14 +240,11 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 return [s, f, num];
               });
               
-              console.log('Normalized fingers for editing:', normalizedFingers);
               setFingers(normalizedFingers);
               
               // Handle barres - the stored barre fret numbers might need adjustment
               // based on the loaded chord's startingFret
               const loadedBarres = chordToEdit.barres || [];
-              console.log('Loading barres from server:', JSON.stringify(loadedBarres));
-              console.log('Loaded chord startingFret:', chordToEdit.startingFret);
               
               // No need to adjust barre fret numbers when loading - they should be stored correctly
               // The issue was in the display/click detection, not in storage
@@ -283,8 +253,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
               setMutedStrings(new Set(chordToEdit.mutedStrings || []));
               setAddLineBreak(chordToEdit.hasLineBreakAfter || false); // Load existing line break status
             } else {
-              console.warn(`Chord with ID ${editingChordId} not found in response`);
-              console.log('Available chords:', chords.map(c => ({ id: c.id, title: c.title })));
             }
           } else {
             console.error('Failed to fetch chord charts:', response.status);
@@ -298,10 +266,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       
       loadChordForEditing();
     } else if (editingChordId) {
-      console.warn('editingChordId provided but no itemId');
     } else {
       // Reset form when not editing (new chord)
-      console.log('Resetting form for new chord');
       setTitle('');
       setStartingFret(1);
       setNumFrets(5);
@@ -335,18 +301,15 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Cleanup on unmount
     return () => {
       if (currentHandlerRef.current && currentHandlerRef.current.svg) {
-        console.log('Cleaning up event listener on unmount');
         currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
       }
     };
   }, []);
 
   const initializeCharts = () => {
-    console.log('Initializing charts, window.svguitar:', window.svguitar);
     try {
       editorChartRef.current = new window.svguitar.SVGuitarChord('#editor-chart');
       resultChartRef.current = new window.svguitar.SVGuitarChord('#result-chart');
-      console.log('Charts created successfully');
       updateCharts();
       setupEditorInteraction();
     } catch (error) {
@@ -359,26 +322,21 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   
   const setupEditorInteraction = () => {
     if (!editorContainerRef.current) {
-      console.log('setupEditorInteraction: No editor container ref');
       return;
     }
 
     const svg = editorContainerRef.current.querySelector('svg');
     if (!svg) {
-      console.log('setupEditorInteraction: No SVG found');
       return;
     }
 
     // Remove the old handler if it exists
     if (currentHandlerRef.current && currentHandlerRef.current.svg) {
-      console.log('Removing old event listener from previous SVG');
       currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
     }
     
     // Create a new handler that captures the current context
     const newHandler = (event) => {
-      const handlerId = Math.random();
-      console.log('Event handler called, id:', handlerId);
       if (event && event.stopPropagation) {
         event.stopPropagation(); // Prevent event bubbling
       }
@@ -386,12 +344,10 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         event.preventDefault();  // Prevent default behavior
       }
       handleEditorClick(event);
-      console.log('Event handler finished, id:', handlerId);
     };
     
     // Add the new handler
     svg.addEventListener('click', newHandler);
-    console.log('setupEditorInteraction: Event listener attached to SVG');
     
     // Store reference for cleanup
     currentHandlerRef.current = { svg, handler: newHandler };
@@ -404,10 +360,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
     
     const currentEditMode = editModeRef.current;
-    console.log('=== CLICK DEBUG ===');
-    console.log('handleEditorClick sees editMode from state as:', editMode);
-    console.log('handleEditorClick sees editMode from ref as:', currentEditMode);
-    console.log('typeof currentEditMode:', typeof currentEditMode);
     if (currentEditMode !== 'dots' && currentEditMode !== 'fingers' && currentEditMode !== 'barres') return;
 
     const svg = event.currentTarget;
@@ -423,13 +375,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Check if SVG is ready - if not, retry after a short delay
     if (!svgViewBox || svgViewBox.width === 0 || svgViewBox.height === 0 || 
         rect.width === 0 || rect.height === 0) {
-      console.log('SVG not ready yet, retrying in 100ms...', {
-        viewBox: svgViewBox ? { width: svgViewBox.width, height: svgViewBox.height } : null,
-        rect: { width: rect.width, height: rect.height }
-      });
       
       // Don't retry - just skip this click
-      console.log('SVG not ready, skipping click');
       return;
     }
     
@@ -444,14 +391,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     
     const x = rawX * scaleX;
     const y = rawY * scaleY;
-
-    console.log('Click coordinates:', { 
-      rawX, rawY, 
-      scaleX, scaleY, 
-      scaledX: x, scaledY: y, 
-      rect: { width: rect.width, height: rect.height },
-      viewBox: { width: svgViewBox.width, height: svgViewBox.height }
-    });
 
     // SVGuitar layout analysis:
     // - There's padding around the actual fretboard
@@ -473,16 +412,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const fretboardWidth = chartWidth - (marginX * 2);
     const fretboardHeight = chartHeight - (marginY * 2);
     
-    console.log('Coordinate calculation params:', {
-      startingFret,
-      marginY,
-      chartHeight,
-      marginYRatio: marginY / chartHeight
-    });
-    
     // Check if click is outside the chart area entirely
     if (x < marginX || x > chartWidth - marginX) {
-      console.log('Click outside chart area horizontally', { x, marginX, chartWidth });
       return;
     }
     
@@ -492,7 +423,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const stringIndex = Math.floor(stringRatio * numStrings);
     
     if (stringIndex < 0 || stringIndex >= numStrings) {
-      console.log('Invalid string index');
       return;
     }
     
@@ -502,7 +432,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Check if click is in the nut area (above the fretboard)
     // For higher position chords, this area is much smaller
     if (y < marginY) {
-      console.log('Nut area click on string:', svguitarString, 'y:', y, 'marginY:', marginY);
       toggleNutMarker(svguitarString);
       return;
     }
@@ -510,7 +439,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Check if click is within fretboard area
     // Use same adjusted marginY for bottom boundary
     if (y > chartHeight - marginY) {
-      console.log('Click below fretboard area');
       return;
     }
     
@@ -524,43 +452,20 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // SVGuitar expects fret numbers relative to the startingFret position
     // So fretIndex is already correct as the relative position
 
-    console.log('Calculated:', { 
-      stringIndex, 
-      stringRatio,
-      fretIndex, 
-      fretRatio, 
-      relativeX,
-      fretboardWidth,
-      relativeY, 
-      fretboardHeight,
-      numStrings, 
-      numFrets,
-      startingFret 
-    });
-
     if (fretIndex >= 1 && fretIndex <= numFrets) {
-      console.log('SVGuitar coordinates:', { svguitarString, fretIndex: fretIndex });
       
-      console.log('About to check editMode conditions. currentEditMode =', currentEditMode, 'type:', typeof currentEditMode);
-      console.log('currentEditMode === "dots":', currentEditMode === 'dots');
-      console.log('currentEditMode === "fingers":', currentEditMode === 'fingers');
-      console.log('currentEditMode === "barres":', currentEditMode === 'barres');
       
       if (currentEditMode === 'dots') {
-        console.log('Calling toggleFinger');
         toggleFinger(svguitarString, fretIndex);
       } else if (currentEditMode === 'fingers') {
-        console.log('Calling selectFingerForNumbering');
         selectFingerForNumbering(svguitarString, fretIndex);
       } else if (currentEditMode === 'barres') {
-        console.log('Calling toggleBarre');
         toggleBarre(svguitarString, fretIndex);
       }
     }
   };
 
   const toggleFinger = (string, fret) => {
-    console.log('toggleFinger called with string:', string, 'fret:', fret);
     
     // Remove any nut markers when adding a finger position
     setOpenStrings(prev => {
@@ -575,29 +480,19 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     });
     
     setFingers(prev => {
-      console.log('Current fingers:', prev);
-      console.log('Current fingers detailed:', JSON.stringify(prev));
-      console.log('Looking for exact match:', [string, fret]);
-      const existingIndex = prev.findIndex((finger, index) => {
-        console.log(`Index ${index}: comparing finger`, finger, 'with target', [string, fret]);
+      const existingIndex = prev.findIndex((finger) => {
         const [s, f] = finger;
-        console.log(`Extracted [${s}, ${f}] (types: ${typeof s}, ${typeof f}) vs [${string}, ${fret}] (types: ${typeof string}, ${typeof fret})`);
         const matches = s === string && f === fret;
-        console.log('Match result:', matches);
         return matches;
       });
-      console.log('Existing index:', existingIndex);
-      console.log('Checking condition: existingIndex >= 0 =', existingIndex >= 0);
       
       if (existingIndex >= 0) {
         // Remove existing finger
         const newFingers = prev.filter((_, index) => index !== existingIndex);
-        console.log('Removing finger, new array:', newFingers);
         return newFingers;
       } else {
         // Add new finger with 3-element structure for finger numbering
         const newFingers = [...prev, [string, fret, undefined]];
-        console.log('Adding finger, new array:', newFingers);
         return newFingers;
       }
     });
@@ -631,22 +526,16 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
   };
 
-  const toggleBarre = (string, fret) => {
-    console.log('toggleBarre called with string:', string, 'fret:', fret);
+  const toggleBarre = (_string, fret) => {
     
     setBarres(prev => {
-      console.log('Current barres:', JSON.stringify(prev));
-      console.log('Looking for barre at fret:', fret);
       const existingIndex = prev.findIndex(barre => {
-        console.log('Checking barre:', JSON.stringify(barre), 'fret:', barre.fret, 'vs target fret:', fret);
         return barre.fret === fret;
       });
-      console.log('Existing barre index:', existingIndex);
       
       if (existingIndex >= 0) {
         // Remove existing barre
         const newBarres = prev.filter((_, index) => index !== existingIndex);
-        console.log('Removing barre, new array:', newBarres);
         return newBarres;
       } else {
         // Add new barre
@@ -657,14 +546,12 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           text: '1'
         };
         const newBarres = [...prev, newBarre];
-        console.log('Adding barre, new array:', JSON.stringify(newBarres));
         return newBarres;
       }
     });
   };
 
   const selectFingerForNumbering = (string, fret) => {
-    console.log('Selecting finger for numbering:', { string, fret });
     // First ensure there's a finger at this position
     const existingFingerIndex = fingers.findIndex(finger => {
       const [s, f] = finger;
@@ -673,7 +560,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     
     if (existingFingerIndex === -1) {
       // No finger here, add one first but don't trigger re-render immediately
-      console.log('No finger found, adding finger first');
       
       // Remove any nut markers when adding a finger position
       setOpenStrings(prev => {
@@ -690,23 +576,18 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       // Add the finger and set it as selected in one batch update
       setFingers(prev => {
         const newFingers = [...prev, [string, fret, undefined]];
-        console.log('Added finger, new fingers array:', newFingers);
         return newFingers;
       });
       
       // Set this position as selected for number input
       setSelectedFinger([string, fret]);
-      console.log('Selected finger for numbering:', [string, fret]);
     } else {
-      console.log('Found existing finger, selecting it');
       // Set this position as selected for number input
       setSelectedFinger([string, fret]);
-      console.log('Selected finger for numbering:', [string, fret]);
     }
   };
 
   const setFingerNumber = (string, fret, number) => {
-    console.log('Setting finger number:', { string, fret, number });
     
     setFingers(prev => {
       return prev.map(finger => {
@@ -722,9 +603,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
   };
 
   const updateCharts = () => {
-    console.log('updateCharts called', { editorChartRef: editorChartRef.current, resultChartRef: resultChartRef.current });
     if (!editorChartRef.current || !resultChartRef.current) {
-      console.log('Charts not ready yet');
       return;
     }
     
@@ -732,7 +611,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const editorElement = document.querySelector('#editor-chart');
     const resultElement = document.querySelector('#result-chart');
     if (!editorElement || !resultElement) {
-      console.log('Chart DOM elements missing, skipping update');
       return;
     }
 
@@ -769,24 +647,12 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         barres
       };
 
-      console.log('Drawing charts with config:', config, 'chordData:', chordData);
-      console.log('Raw fingers state:', fingers);
-      console.log('AllFingers being sent to SVGuitar:', allFingers);
-      console.log('AllFingers detailed:', JSON.stringify(allFingers));
-      console.log('Config fingerTextColor:', config.fingerTextColor);
-      console.log('Config fingerTextSize:', config.fingerTextSize);
-      
-      // Debug: Check finger structure
-      allFingers.forEach((finger, i) => {
-        console.log(`Finger ${i}:`, finger, 'length:', finger.length, 'has finger number:', finger[2] !== undefined);
-      });
 
       // Check if chord data or title has actually changed
       const chartStateString = JSON.stringify({ chordData, title });
       const hasChanged = chartStateString !== lastChordDataRef.current;
       
       if (hasChanged) {
-        console.log('Chart state changed, redrawing charts');
         lastChordDataRef.current = chartStateString;
         
         // Update existing charts without recreating them
@@ -803,9 +669,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           .chord(chordData)
           .draw();
 
-        console.log('Charts drawn successfully');
       } else {
-        console.log('Chord data unchanged, skipping redraw');
       }
       
       // Add explicit debug output to check if finger text is being applied
@@ -815,19 +679,11 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         
         // Check for finger text elements in the SVG
         if (editorSvg) {
-          const fingerTextElements = editorSvg.querySelectorAll('text[fill="#000000"]');
-          console.log('Found finger text elements in editor SVG:', fingerTextElements.length);
-          fingerTextElements.forEach((el, i) => {
-            console.log(`Finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
-          });
+          // Finger text elements available via: editorSvg.querySelectorAll('text[fill="#000000"]')
         }
         
         if (resultSvg) {
-          const fingerTextElements = resultSvg.querySelectorAll('text[fill="#000000"]');
-          console.log('Found finger text elements in result SVG:', fingerTextElements.length);
-          fingerTextElements.forEach((el, i) => {
-            console.log(`Finger text ${i}:`, el.textContent, 'at position', el.getAttribute('x'), el.getAttribute('y'));
-          });
+          // Finger text elements available via: resultSvg.querySelectorAll('text[fill="#000000"]')
         }
         
         // Style the SVGs
@@ -845,7 +701,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           resultSvg.style.maxHeight = '320px'; // Match container height h-80
         }
         
-        console.log('Setting up editor interaction after SVG styling');
         setupEditorInteraction();
       }, 100);
     } catch (error) {
@@ -1022,7 +877,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           <Button
             variant={editMode === 'fingers' ? 'default' : 'outline'}
             onClick={() => {
-              console.log('Edit Fingers button clicked, setting mode to fingers');
               setEditMode('fingers');
             }}
             className={`flex-1 ${
@@ -1084,13 +938,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
         <div className="flex gap-2">
           <Button 
             onClick={() => {
-              console.log('=== CHORD SAVE DEBUG ===');
-              console.log('Saving chord chart with title:', title);
-              console.log('Fingers state before save:', fingers);
-              console.log('Fingers detailed:', JSON.stringify(fingers));
-              console.log('Open strings:', Array.from(openStrings));
-              console.log('Muted strings:', Array.from(mutedStrings));
-              console.log('Editing chord ID:', editingChordId);
               
               const saveData = { 
                 title, 
@@ -1108,9 +955,6 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 editingChordId  // Pass this so the save handler knows whether to create or update
               };
               
-              console.log('=== SAVE DATA BEING SENT ===');
-              console.log('Full save data:', JSON.stringify(saveData));
-              console.log('Save data fingers specifically:', JSON.stringify(saveData.fingers));
               
               onSave(saveData);
             }} 

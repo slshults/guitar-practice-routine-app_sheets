@@ -12,7 +12,6 @@ export const useAuth = () => {
       const response = await fetch('/api/auth/status');
       if (!response.ok) throw new Error('Auth check failed');
       const data = await response.json();
-      console.log('Auth status:', data); // For debugging
       setIsAuthenticated(data.authenticated);
       setHasSpreadsheetAccess(data.hasSpreadsheetAccess);
       setError(null);

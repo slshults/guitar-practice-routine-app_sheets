@@ -274,7 +274,6 @@ const RoutinesPage = () => {
   }, [newRoutineName, fetchRoutines]);
 
   const handleEditClick = useCallback(async (routine) => {
-    console.log('Editing routine:', routine); // For debugging
     
     // Lazy-load items before opening editor
     await fetchItemsIfNeeded();
@@ -298,7 +297,6 @@ const RoutinesPage = () => {
   }, [activeRoutineItems, fetchItemsIfNeeded]);
 
   const handleRoutineChange = useCallback(() => {
-    console.log('Routine changed, refreshing list...'); // For debugging
     fetchRoutines();
   }, [fetchRoutines]);
 
