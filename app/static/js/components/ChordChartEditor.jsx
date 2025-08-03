@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { Button } from '@ui/button';
+import { Input } from '@ui/input';
 
 const defaultChartConfig = {
   strings: 6,

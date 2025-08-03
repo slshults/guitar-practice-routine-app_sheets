@@ -1873,8 +1873,36 @@ def bulk_import_chords_from_local_file(chord_names=None, local_file_path=None):
         logging.error(f"Error in local bulk import: {str(e)}")
         raise ValueError(f"Local bulk import failed: {str(e)}")
 
+def get_chart_section_data(chart_record):
+    """Extract section metadata from a chord chart record."""
+    try:
+        chord_data_json = chart_record.get('D', '{}')
+        if isinstance(chord_data_json, str):
+            chord_data = json.loads(chord_data_json)
+        else:
+            chord_data = chord_data_json
+        
+        return {
+            'sectionId': chord_data.get('sectionId', 'section-1'),
+            'sectionLabel': chord_data.get('sectionLabel', 'Verse'),
+            'sectionRepeatCount': chord_data.get('sectionRepeatCount', '')
+        }
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        # Fallback for malformed or missing section data
+        return {
+            'sectionId': 'section-1',
+            'sectionLabel': 'Verse', 
+            'sectionRepeatCount': ''
+        }
+
 def copy_chord_charts_to_items(source_item_id, target_item_ids):
-    """Copy chord charts from one song to multiple other songs by updating ItemID column."""
+    """Copy chord charts from one song to multiple other songs using sharing model with conflict resolution.
+    
+    Steps:
+    1. Find source charts 
+    2. For each target: remove any existing chord charts (source wins)
+    3. Add target ItemIDs to source charts (sharing model)
+    """
     try:
         spread = get_spread()
         sheet = spread.worksheet('ChordCharts')
@@ -1893,11 +1921,44 @@ def copy_chord_charts_to_items(source_item_id, target_item_ids):
         
         if not source_charts:
             logging.warning(f"No chord charts found for source item {source_item_id}")
-            return {'updated': 0, 'charts_found': 0}
+            return {'updated': 0, 'removed': 0, 'charts_found': 0}
         
         updated_count = 0
+        removed_count = 0
         
-        # Update each source chart to include the target item IDs
+        # Step 1: Remove existing chord charts from target items (source wins)
+        for target_id in target_item_ids_str:
+            logging.info(f"Removing existing chord charts for target item {target_id} before copying")
+            
+            # Find charts that belong ONLY to this target item
+            charts_to_remove = []
+            charts_to_update = []
+            
+            for record in records:
+                item_ids = record.get('B', '').split(',')
+                item_ids = [id.strip() for id in item_ids if id.strip()]
+                
+                if target_id in item_ids:
+                    if len(item_ids) == 1:
+                        # Chart belongs only to target - remove entirely
+                        charts_to_remove.append(record)
+                    else:
+                        # Chart is shared - remove target from the list
+                        item_ids.remove(target_id)
+                        record['B'] = ', '.join(item_ids)
+                        charts_to_update.append(record)
+            
+            # Remove charts that belonged only to target
+            for chart in charts_to_remove:
+                records.remove(chart)
+                removed_count += 1
+                logging.info(f"Removed chart '{chart.get('C', '')}' that belonged only to item {target_id}")
+            
+            # Log updated shared charts
+            for chart in charts_to_update:
+                logging.info(f"Removed item {target_id} from shared chart '{chart.get('C', '')}'")
+        
+        # Step 2: Add target item IDs to source charts (sharing model)
         for record in source_charts:
             current_item_ids = record.get('B', '').split(',')
             current_item_ids = [id.strip() for id in current_item_ids if id.strip()]
@@ -1906,6 +1967,7 @@ def copy_chord_charts_to_items(source_item_id, target_item_ids):
             for target_id in target_item_ids_str:
                 if target_id not in current_item_ids:
                     current_item_ids.append(target_id)
+                    logging.info(f"Added item {target_id} to chart '{record.get('C', '')}'")
             
             # Update the ItemID column with comma-separated list
             record['B'] = ', '.join(current_item_ids)
@@ -1915,9 +1977,10 @@ def copy_chord_charts_to_items(source_item_id, target_item_ids):
         success = records_to_sheet(sheet, records, is_routine_worksheet=False)
         if success:
             invalidate_caches()
-            logging.info(f"Successfully copied {len(source_charts)} chord charts from item {source_item_id} to items {target_item_ids}")
+            logging.info(f"Successfully copied {len(source_charts)} chord charts from item {source_item_id} to {len(target_item_ids)} items: {updated_count} charts updated, {removed_count} existing charts removed")
             return {
                 'updated': updated_count,
+                'removed': removed_count,
                 'charts_found': len(source_charts),
                 'target_items': target_item_ids
             }

@@ -1525,15 +1525,17 @@ export const PracticePage = () => {
 
   const toggleChordEditor = (itemId, e) => {
     e?.stopPropagation();
-    setShowChordEditor(prev => ({
-      ...prev,
-      [itemId]: !prev[itemId]
-    }));
-    
-    // Clear editing state when closing the editor
-    if (prev[itemId]) {
-      setEditingChordId(null);
-    }
+    setShowChordEditor(prev => {
+      // Clear editing state when closing the editor
+      if (prev[itemId]) {
+        setEditingChordId(null);
+      }
+      
+      return {
+        ...prev,
+        [itemId]: !prev[itemId]
+      };
+    });
   };
 
   return (
