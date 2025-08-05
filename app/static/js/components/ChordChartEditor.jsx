@@ -54,7 +54,7 @@ const fetchWithBackoff = async (url, options = {}, maxRetries = 3, onRetry = nul
   throw new Error(`Failed after ${maxRetries} attempts`);
 };
 
-export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = null, defaultTuning = 'EADGBE' }) => {
+export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = null, insertionContext = null, defaultTuning = 'EADGBE' }) => {
   const [title, setTitle] = useState('');
   const [startingFret, setStartingFret] = useState(1);
   const [numFrets, setNumFrets] = useState(5);
@@ -954,7 +954,9 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
                 mutedStrings: Array.from(mutedStrings),
                 // Both new and existing chords use startOnNewLine to affect the previous chord
                 startOnNewLine: addLineBreak,
-                editingChordId  // Pass this so the save handler knows whether to create or update
+                editingChordId,  // Pass this so the save handler knows whether to create or update
+                // Include insertion context for proper positioning and section metadata
+                insertionContext
               };
               
               

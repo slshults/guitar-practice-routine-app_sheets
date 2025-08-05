@@ -1013,7 +1013,7 @@ def add_chord_chart(item_id, chord_data):
         # Create comma-separated ItemID string
         item_ids_str = ', '.join(sorted(all_item_ids))
         
-        # Get max order for this item
+        # Get item charts for order management
         item_charts = []
         for r in records:
             record_item_ids = r.get('B', '').split(',')
@@ -1021,8 +1021,48 @@ def add_chord_chart(item_id, chord_data):
             if item_id_str in record_item_ids:
                 item_charts.append(r)
         
-        max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
-        new_order = max_order + 1
+        # Handle insertion context for proper order assignment
+        if 'insertionContext' in chord_data and chord_data['insertionContext']:
+            # Insert after specific chord with order rebalancing
+            insertion_order = chord_data['insertionContext']['insertOrder']
+            new_order = insertion_order
+            
+            # Filter to same section only for order rebalancing
+            target_section_id = chord_data['insertionContext']['sectionId']
+            
+            logging.info(f"Inserting chord at order {insertion_order} in section {target_section_id}")
+            
+            # Update order for existing chords that need to be shifted
+            shifts_made = 0
+            for record in records:
+                record_item_ids = record.get('B', '').split(',')
+                record_item_ids = [id.strip() for id in record_item_ids if id.strip()]
+                
+                if item_id_str in record_item_ids:
+                    current_order = int(float(record.get('F', 0)))
+                    
+                    # Check if this chord is in the same section by parsing its chord data
+                    try:
+                        import json
+                        record_chord_data = json.loads(record.get('D', '{}'))
+                        record_section_id = record_chord_data.get('sectionId', 'section-1')
+                        
+                        # Only increment order for chords in same section with order >= insertion point
+                        if record_section_id == target_section_id and current_order >= insertion_order:
+                            old_order = record['F']
+                            record['F'] = str(current_order + 1)
+                            shifts_made += 1
+                            logging.info(f"Shifted chord {record.get('A')} ({record_chord_data.get('title', 'Unknown')}) from order {old_order} to {record['F']}")
+                    except (json.JSONDecodeError, ValueError):
+                        # Skip records with invalid JSON
+                        logging.warning(f"Skipping record {record.get('A')} with invalid JSON")
+                        continue
+            
+            logging.info(f"Made {shifts_made} order shifts for insertion")
+        else:
+            # Original behavior: add to end
+            max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
+            new_order = max_order + 1
         
         # Format timestamp
         now = datetime.now()

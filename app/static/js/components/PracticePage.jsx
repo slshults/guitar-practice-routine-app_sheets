@@ -75,7 +75,7 @@ const formatHoursAndMinutes = (minutes) => {
 };
 
 // Memoized chord chart component that only re-renders when chord data changes
-const MemoizedChordChart = memo(({ chart, onEdit, onDelete }) => {
+const MemoizedChordChart = memo(({ chart, onEdit, onDelete, onInsertAfter }) => {
   const chartRef = useRef(null);
   
   useEffect(() => {
@@ -210,6 +210,26 @@ const MemoizedChordChart = memo(({ chart, onEdit, onDelete }) => {
       >
         ×
       </button>
+
+      {/* Insert after button */}
+      {onInsertAfter && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onInsertAfter(chart.id, chart);
+          }}
+          className="absolute bottom-1 right-8 w-6 h-6 bg-blue-500 hover:bg-blue-400 text-white rounded-full flex items-center justify-center text-sm font-bold transition-colors cursor-pointer z-20 shadow-lg"
+          title="Insert chord after this one"
+          style={{
+            position: 'absolute',
+            bottom: '4px',
+            right: '32px',
+            zIndex: 20
+          }}
+        >
+          +
+        </button>
+      )}
       
       <div className="relative w-full h-48 mx-auto flex items-center justify-center overflow-hidden">
         <div 
@@ -244,6 +264,7 @@ export const PracticePage = () => {
   const [chordSections, setChordSections] = useState({});
   const [deletingSection, setDeletingSection] = useState(new Set());
   const [editingChordId, setEditingChordId] = useState(null);
+  const [insertionContext, setInsertionContext] = useState(null);
   
   // Chord chart copy modal state
   const [showCopyModal, setShowCopyModal] = useState(false);
@@ -1063,12 +1084,19 @@ export const PracticePage = () => {
         });
         
       } else {
-        // For new chords, determine target section (use last section, or create default)
+        // For new chords, determine target section
         const itemSections = chordSections[itemId] || getChordSections(itemId);
         let targetSection;
         
-        
-        if (itemSections.length === 0) {
+        // Check if we have insertion context (inserting after specific chord)
+        if (chartData.insertionContext) {
+          // Use section from insertion context
+          targetSection = {
+            id: chartData.insertionContext.sectionId,
+            label: chartData.insertionContext.sectionLabel,
+            repeatCount: chartData.insertionContext.sectionRepeatCount
+          };
+        } else if (itemSections.length === 0) {
           // No sections exist, create default
           targetSection = {
             id: 'section-1',
@@ -1076,7 +1104,7 @@ export const PracticePage = () => {
             repeatCount: ''
           };
         } else {
-          // Use the last section
+          // Use the last section (original behavior for "Add New Chord")
           targetSection = itemSections[itemSections.length - 1];
         }
         
@@ -1132,7 +1160,7 @@ export const PracticePage = () => {
             });
 
             if (lineBreakResponse.ok) {
-              const updatedTargetChord = await lineBreakResponse.json();
+              await lineBreakResponse.json(); // Response processed but not used
               
               // Create a function to update state with line break that can be reused
               const updateStateWithLineBreak = (currentCharts) => {
@@ -1359,18 +1387,57 @@ export const PracticePage = () => {
             };
           }
           
-          // Add to the last section
+          // Add to appropriate section with proper insertion logic
           const updatedSections = [...itemSections];
-          const lastSection = { ...updatedSections[updatedSections.length - 1] };
-          lastSection.chords = [...lastSection.chords, savedChart];
+          
+          if (chartData.insertionContext) {
+            // Insert at specific position within target section
+            const targetSectionIndex = updatedSections.findIndex(section => 
+              section.id === chartData.insertionContext.sectionId
+            );
+            
+            if (targetSectionIndex >= 0) {
+              const targetSection = { ...updatedSections[targetSectionIndex] };
+              const insertOrder = chartData.insertionContext.insertOrder;
+              
+              // Find insertion point and insert chord
+              const insertionIndex = targetSection.chords.findIndex(chord => 
+                parseInt(chord.order) >= insertOrder
+              );
+              
+              if (insertionIndex >= 0) {
+                // Insert in the middle of the section
+                targetSection.chords = [
+                  ...targetSection.chords.slice(0, insertionIndex),
+                  savedChart,
+                  ...targetSection.chords.slice(insertionIndex)
+                ];
+              } else {
+                // Insert at the end of the section
+                targetSection.chords = [...targetSection.chords, savedChart];
+              }
+              
+              updatedSections[targetSectionIndex] = targetSection;
+            } else {
+              // Target section not found, add to last section as fallback
+              const lastSection = { ...updatedSections[updatedSections.length - 1] };
+              lastSection.chords = [...lastSection.chords, savedChart];
+              updatedSections[updatedSections.length - 1] = lastSection;
+            }
+          } else {
+            // Original behavior: add to the last section
+            const lastSection = { ...updatedSections[updatedSections.length - 1] };
+            lastSection.chords = [...lastSection.chords, savedChart];
+            updatedSections[updatedSections.length - 1] = lastSection;
+          }
           
           // Apply line break updater if it exists
           if (chartDataWithSection._lineBreakUpdater) {
-            serverDebug('Applying line break updater to updated section');
-            lastSection.chords = chartDataWithSection._lineBreakUpdater(lastSection.chords);
+            serverDebug('Applying line break updater to updated sections');
+            updatedSections.forEach(section => {
+              section.chords = chartDataWithSection._lineBreakUpdater(section.chords);
+            });
           }
-          
-          updatedSections[updatedSections.length - 1] = lastSection;
           
           return {
             ...prev,
@@ -1387,6 +1454,7 @@ export const PracticePage = () => {
         [itemId]: false
       }));
       setEditingChordId(null);
+      setInsertionContext(null);
 
     } catch (error) {
       console.error('Error saving chord chart:', error);
@@ -1455,6 +1523,29 @@ export const PracticePage = () => {
     // Set the editing chord ID in the editor so it knows to update instead of create
     // We'll need to pass this to the ChordChartEditor component
     setEditingChordId(chordId);
+  };
+
+  const handleInsertChordAfter = (itemId, afterChordId, afterChartData) => {
+    console.log('Insert chord after:', afterChordId, 'for item:', itemId, 'with data:', afterChartData);
+    
+    // Show the chord editor for this item
+    setShowChordEditor(prev => ({
+      ...prev,
+      [itemId]: true
+    }));
+    
+    // Set insertion context - we'll pass this to the ChordChartEditor
+    // insertOrder should be the position to insert at, not after
+    setInsertionContext({
+      afterChordId,
+      sectionId: afterChartData.sectionId,
+      sectionLabel: afterChartData.sectionLabel,
+      sectionRepeatCount: afterChartData.sectionRepeatCount,
+      insertOrder: parseInt(afterChartData.order) + 1
+    });
+    
+    // Clear editing chord ID since this is a new chord
+    setEditingChordId(null);
   };
 
   // Chord chart copy functionality
@@ -1529,6 +1620,7 @@ export const PracticePage = () => {
       // Clear editing state when closing the editor
       if (prev[itemId]) {
         setEditingChordId(null);
+        setInsertionContext(null);
       }
       
       return {
@@ -1787,6 +1879,7 @@ export const PracticePage = () => {
                                           chart={chart}
                                           onEdit={(chordId, chartData) => handleEditChordChart(itemReferenceId, chordId, chartData)}
                                           onDelete={(chordId) => handleDeleteChordChart(itemReferenceId, chordId)}
+                                          onInsertAfter={(chordId, chartData) => handleInsertChordAfter(itemReferenceId, chordId, chartData)}
                                         />
                                       ))}
                                     </div>
@@ -1835,10 +1928,12 @@ export const PracticePage = () => {
                                   itemId={itemReferenceId}
                                   defaultTuning={itemDetails?.H || 'EADGBE'}
                                   editingChordId={editingChordId}
+                                  insertionContext={insertionContext}
                                   onSave={(chartData) => handleSaveChordChart(itemReferenceId, chartData)}
                                   onCancel={() => {
                                     setShowChordEditor(prev => ({ ...prev, [itemReferenceId]: false }));
                                     setEditingChordId(null);
+                                    setInsertionContext(null);
                                   }}
                                 />
                               )}
