@@ -1414,13 +1414,23 @@ def search_common_chord_charts(chord_name):
             # Get all values in the title column to search through
             title_values = sheet.col_values(3)  # Column C (Title)
             
-            # Find matching row indices (1-based)
-            matching_indices = []
+            # Find matching row indices (1-based) - prioritize exact matches
+            exact_matches = []
+            partial_matches = []
             chord_name_lower = chord_name.lower()
             
             for i, title in enumerate(title_values[1:], start=2):  # Skip header row
-                if title and chord_name_lower in title.lower():
-                    matching_indices.append(i)
+                if title:
+                    title_lower = title.lower()
+                    if chord_name_lower == title_lower:
+                        # Exact match - highest priority
+                        exact_matches.append(i)
+                    elif chord_name_lower in title_lower:
+                        # Substring match - lower priority
+                        partial_matches.append(i)
+            
+            # Combine matches with exact matches first
+            matching_indices = exact_matches + partial_matches
             
             if not matching_indices:
                 logging.info(f"No common chords found matching '{chord_name}'")
@@ -1458,7 +1468,10 @@ def search_common_chord_charts(chord_name):
                         'numFrets': chord_data.get('numFrets', 5),
                         'numStrings': chord_data.get('numStrings', 6),
                         'tuning': chord_data.get('tuning', 'EADGBE'),
-                        'capo': chord_data.get('capo', 0)
+                        'capo': chord_data.get('capo', 0),
+                        'openStrings': chord_data.get('openStrings', []),
+                        'mutedStrings': chord_data.get('mutedStrings', []),
+                        'startingFret': chord_data.get('startingFret', 1)
                     }
                     matching_chords.append(chord_chart)
                     
