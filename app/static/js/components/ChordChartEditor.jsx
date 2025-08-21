@@ -932,7 +932,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
             className="w-4 h-4 text-blue-600 bg-gray-900 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
           />
           <label htmlFor="addLineBreak" className="text-sm text-gray-300 cursor-pointer">
-            Add line break before this chord ↩️
+            Line break after ↩️
           </label>
         </div>
 

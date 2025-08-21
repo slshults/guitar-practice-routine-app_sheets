@@ -1116,106 +1116,12 @@ export const PracticePage = () => {
         
       }
       
-      // Handle line break before this chord (for both new and existing chords)
-      if (chartData.startOnNewLine) {
-        let targetChord, targetSection;
-        
-        if (isUpdate) {
-          // For existing chords: find the chord that comes before the one being edited
-          const allItemCharts = (chordCharts[itemId] || []).sort((a, b) => (a.order || 0) - (b.order || 0));
-          const editingChordIndex = allItemCharts.findIndex(chart => 
-            parseInt(chart.id) === parseInt(chartData.editingChordId)
-          );
-          
-          if (editingChordIndex > 0) {
-            // Found a chord before the one being edited
-            targetChord = allItemCharts[editingChordIndex - 1];
-          } else {
-            serverDebug('No chord before the editing chord, line break not needed');
-          }
-        } else {
-          // For new chords: find the last chord in the target section (original behavior)
-          targetSection = chartDataWithSection;
-          const sectionCharts = (chordCharts[itemId] || []).filter(chart => 
-            (chart.sectionId || 'section-1') === targetSection.sectionId
-          );
-          
-          if (sectionCharts.length > 0) {
-            const sortedCharts = sectionCharts.sort((a, b) => (a.order || 0) - (b.order || 0));
-            targetChord = sortedCharts[sortedCharts.length - 1];
-          } else {
-            serverDebug('No previous chords in section, line break not needed');
-          }
-        }
-        
-        // Apply the line break if we found a target chord
-        if (targetChord) {
-          
-          try {
-            // Update the target chord to have a line break after it
-            const lineBreakResponse = await fetch(`/api/chord-charts/${targetChord.id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ hasLineBreakAfter: true })
-            });
-
-            if (lineBreakResponse.ok) {
-              await lineBreakResponse.json(); // Response processed but not used
-              
-              // Create a function to update state with line break that can be reused
-              const updateStateWithLineBreak = (currentCharts) => {
-                return currentCharts.map(chart => {
-                  const isTargetChart = parseInt(chart.id) === parseInt(targetChord.id);
-                  serverDebug('Checking chart for line break update', {
-                    chartId: chart.id,
-                    chartIdInt: parseInt(chart.id),
-                    targetId: targetChord.id,
-                    targetIdInt: parseInt(targetChord.id),
-                    isMatch: isTargetChart,
-                    chartTitle: chart.title
-                  });
-                  
-                  if (isTargetChart) {
-                    serverDebug('Updating chart with line break', { 
-                      originalChart: { id: chart.id, title: chart.title, hasLineBreakAfter: chart.hasLineBreakAfter },
-                      updatedChart: { id: chart.id, title: chart.title, hasLineBreakAfter: true }
-                    });
-                    return { ...chart, hasLineBreakAfter: true };
-                  }
-                  return chart;
-                });
-              };
-
-              // Update local state immediately
-              setChordCharts(prev => {
-                const updatedCharts = updateStateWithLineBreak(prev[itemId] || []);
-                
-                serverDebug('Final updated charts for line break', {
-                  itemId,
-                  originalCount: (prev[itemId] || []).length,
-                  updatedCount: updatedCharts.length,
-                  chartsWithLineBreak: updatedCharts.filter(c => c.hasLineBreakAfter).map(c => ({ id: c.id, title: c.title }))
-                });
-                
-                return {
-                  ...prev,
-                  [itemId]: updatedCharts
-                };
-              });
-              
-              // Store the line break update function for later use
-              chartDataWithSection._lineBreakUpdater = updateStateWithLineBreak;
-            } else {
-              serverInfo('Failed to add line break to target chord', { 
-                status: lineBreakResponse.status,
-                statusText: lineBreakResponse.statusText 
-              });
-            }
-          } catch (error) {
-            serverInfo('Error adding line break to target chord', { error: error.message });
-          }
-        }
-      }
+      // Handle line break after this chord - always set the value explicitly
+      chartDataWithSection.hasLineBreakAfter = chartData.startOnNewLine || false;
+      serverDebug('Setting line break after chord', { 
+        title: chartDataWithSection.title,
+        hasLineBreakAfter: chartDataWithSection.hasLineBreakAfter 
+      });
       
       serverDebug('Chord data with section metadata', { chartDataWithSection });
       
@@ -1855,7 +1761,7 @@ export const PracticePage = () => {
                                     
                                     // Start new row if:
                                     // 1. This chord has a line break after it
-                                    // 2. We've reached 5 chords (original behavior)
+                                    // 2. We've reached 5 chords
                                     // 3. This is the last chord
                                     if (chart.hasLineBreakAfter || currentRow.length >= 5 || index === section.chords.length - 1) {
                                       chordRows.push([...currentRow]);
