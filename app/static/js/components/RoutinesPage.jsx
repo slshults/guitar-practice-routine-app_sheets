@@ -132,7 +132,7 @@ const SortableInactiveRoutine = React.memo(({ routine, handleActivateRoutine, ha
 });
 
 const RoutinesPage = () => {
-  const { isAuthenticated, checking, handleLogout } = useAuth();
+  const { isAuthenticated, checking } = useAuth();
   const [items, setItems] = useState([]);  // Lazy-loaded when needed
   const [newRoutineName, setNewRoutineName] = useState('');
   const [routines, setRoutines] = useState([]);
@@ -142,7 +142,6 @@ const RoutinesPage = () => {
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [error, setError] = useState(null);
   const [activeRoutineItems, setActiveRoutineItems] = useState([]);
-  const [isDragging, setIsDragging] = useState(false);
 
   const activeRoutine = useMemo(() => routines.find(r => r.active), [routines]);
   const inactiveRoutines = useMemo(() => 
@@ -334,12 +333,8 @@ const RoutinesPage = () => {
     fetchActiveRoutineItems();
   }, [fetchActiveRoutineItems]);
 
-  const handleDragStart = () => {
-    setIsDragging(true);
-  };
 
   const handleDragEnd = async ({ active, over }) => {
-    setIsDragging(false);
     if (!active || !over || active.id === over.id) return;
 
     const oldIndex = activeRoutineItems.findIndex(item => item['A'] === active.id);
@@ -396,27 +391,23 @@ const RoutinesPage = () => {
       // Create new array with moved item
       const reordered = arrayMove(inactiveRoutines, oldIndex, newIndex);
       
-      // Just swap the order values between the moved items
-      const updates = [
-        {
-          'A': reordered[newIndex].ID,
-          'D': inactiveRoutines[newIndex].order
-        },
-        {
-          'A': inactiveRoutines[newIndex].ID,
-          'D': reordered[newIndex].order
-        }
-      ];
+      // Update ALL affected items' order values to match their new positions
+      const updates = reordered.map((routine, index) => ({
+        'A': routine.ID,
+        'D': index.toString()  // New order based on position
+      }));
       
       // Update UI optimistically
       setRoutines(prevRoutines => {
-        return prevRoutines.map(routine => {
-          const update = updates.find(u => u.A === routine.ID);
-          if (update) {
-            return { ...routine, order: update.D };
-          }
-          return routine;
+        const activeRoutine = prevRoutines.find(r => r.active);
+        const updatedInactive = updates.map(update => {
+          const original = prevRoutines.find(r => r.ID === update.A);
+          return { ...original, order: update.D };
         });
+        
+        return activeRoutine 
+          ? [activeRoutine, ...updatedInactive]
+          : updatedInactive;
       });
       
       // Send update to backend
@@ -519,7 +510,6 @@ const RoutinesPage = () => {
                   <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
-                    onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
                   >
                     <SortableContext
