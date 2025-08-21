@@ -35,22 +35,34 @@ def _throttle_batch_operation():
 
 def retry_on_rate_limit(func, max_retries=3, base_delay=1):
     """
-    Retry a function on rate limit errors with exponential backoff.
+    Retry a function on rate limit errors with exponential backoff and jitter.
     """
+    import random
+    
     for attempt in range(max_retries + 1):
         try:
             return func()
         except Exception as e:
             error_str = str(e).lower()
+            # Check for various rate limit error messages
             is_rate_limit = any(phrase in error_str for phrase in [
-                'quota exceeded', 'rate_limit_exceeded', 'too many requests'
+                'quota exceeded', 'rate_limit_exceeded', 'too many requests',
+                '429', 'rate limit', 'quota', 'exceed', 'throttl'
             ])
             
+            # Also check for specific Google API errors
+            if hasattr(e, 'resp') and hasattr(e.resp, 'status'):
+                if e.resp.status in ['429', 429]:  # Too Many Requests
+                    is_rate_limit = True
+            
             if is_rate_limit and attempt < max_retries:
-                # Exponential backoff: 1s, 2s, 4s
+                # Exponential backoff with jitter: 1-2s, 2-4s, 4-8s
                 delay = base_delay * (2 ** attempt)
-                logging.warning(f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
-                time.sleep(delay)
+                # Add random jitter (0-50% of delay) to prevent thundering herd
+                jitter = random.uniform(0, delay * 0.5)
+                total_delay = delay + jitter
+                logging.warning(f"Rate limit hit, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(total_delay)
                 continue
             else:
                 # Either not a rate limit error, or we've exhausted retries

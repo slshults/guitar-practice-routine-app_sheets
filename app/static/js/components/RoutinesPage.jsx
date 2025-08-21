@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@hooks/useAuth';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
@@ -142,6 +142,10 @@ const RoutinesPage = () => {
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [error, setError] = useState(null);
   const [activeRoutineItems, setActiveRoutineItems] = useState([]);
+  
+  // Debounce timer for routine order updates
+  const routineOrderDebounceRef = useRef(null);
+  const pendingRoutineOrderRef = useRef(null);
 
   const activeRoutine = useMemo(() => routines.find(r => r.active), [routines]);
   const inactiveRoutines = useMemo(() => 
@@ -381,51 +385,71 @@ const RoutinesPage = () => {
     }
   };
 
-  const handleDragEndInactive = async ({ active, over }) => {
-    if (!active || !over || active.id === over.id) return;
-
-    const oldIndex = inactiveRoutines.findIndex(routine => routine.ID === active.id);
-    const newIndex = inactiveRoutines.findIndex(routine => routine.ID === over.id);
-
+  // Debounced function to save routine order to backend
+  const saveRoutineOrder = useCallback(async (updates) => {
     try {
-      // Create new array with moved item
-      const reordered = arrayMove(inactiveRoutines, oldIndex, newIndex);
-      
-      // Update ALL affected items' order values to match their new positions
-      const updates = reordered.map((routine, index) => ({
-        'A': routine.ID,
-        'D': index.toString()  // New order based on position
-      }));
-      
-      // Update UI optimistically
-      setRoutines(prevRoutines => {
-        const activeRoutine = prevRoutines.find(r => r.active);
-        const updatedInactive = updates.map(update => {
-          const original = prevRoutines.find(r => r.ID === update.A);
-          return { ...original, order: update.D };
-        });
-        
-        return activeRoutine 
-          ? [activeRoutine, ...updatedInactive]
-          : updatedInactive;
-      });
-      
-      // Send update to backend
       const orderResponse = await fetch('/api/routines/order', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
       
-      if (!orderResponse.ok) throw new Error('Failed to update routine order');
-      
-      // Refresh routines to ensure sync
-      await fetchRoutines();
+      if (!orderResponse.ok) {
+        const errorText = await orderResponse.text();
+        throw new Error(`Failed to update routine order: ${errorText}`);
+      }
     } catch (error) {
-      console.error('Reorder failed:', error);
-      // Revert to original order on error
+      console.error('Failed to save routine order:', error);
+      // Show error to user
+      setError('Failed to save routine order. Please refresh the page.');
+      // Revert by fetching latest data
       await fetchRoutines();
     }
+  }, [fetchRoutines]);
+
+  const handleDragEndInactive = ({ active, over }) => {
+    if (!active || !over || active.id === over.id) return;
+
+    const oldIndex = inactiveRoutines.findIndex(routine => routine.ID === active.id);
+    const newIndex = inactiveRoutines.findIndex(routine => routine.ID === over.id);
+
+    // Create new array with moved item
+    const reordered = arrayMove(inactiveRoutines, oldIndex, newIndex);
+    
+    // Update ALL affected items' order values to match their new positions
+    const updates = reordered.map((routine, index) => ({
+      'A': routine.ID,
+      'D': index.toString()  // New order based on position
+    }));
+    
+    // Update UI optimistically
+    setRoutines(prevRoutines => {
+      const activeRoutine = prevRoutines.find(r => r.active);
+      const updatedInactive = updates.map(update => {
+        const original = prevRoutines.find(r => r.ID === update.A);
+        return { ...original, order: update.D };
+      });
+      
+      return activeRoutine 
+        ? [activeRoutine, ...updatedInactive]
+        : updatedInactive;
+    });
+    
+    // Store the pending update
+    pendingRoutineOrderRef.current = updates;
+    
+    // Clear any existing debounce timer
+    if (routineOrderDebounceRef.current) {
+      clearTimeout(routineOrderDebounceRef.current);
+    }
+    
+    // Set new debounce timer (500ms delay)
+    routineOrderDebounceRef.current = setTimeout(() => {
+      if (pendingRoutineOrderRef.current) {
+        saveRoutineOrder(pendingRoutineOrderRef.current);
+        pendingRoutineOrderRef.current = null;
+      }
+    }, 500);
   };
 
   useEffect(() => {
@@ -434,6 +458,19 @@ const RoutinesPage = () => {
       fetchRoutines();
     }
   }, [checking, fetchRoutines]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (routineOrderDebounceRef.current) {
+        clearTimeout(routineOrderDebounceRef.current);
+        // Save any pending updates before unmounting
+        if (pendingRoutineOrderRef.current) {
+          saveRoutineOrder(pendingRoutineOrderRef.current);
+        }
+      }
+    };
+  }, [saveRoutineOrder]);
 
   if (checking) {
     return (

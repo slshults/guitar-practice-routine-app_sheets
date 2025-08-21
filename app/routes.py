@@ -1021,33 +1021,45 @@ def update_routines_order():
         updates = request.json
         app.logger.debug(f"Updates to apply: {updates}")
         
-        # Get the Routines sheet
-        spread = get_spread()
-        routines_sheet = spread.worksheet('Routines')
+        # Wrap the entire operation in retry logic
+        def do_update():
+            # Get the Routines sheet
+            spread = get_spread()
+            routines_sheet = spread.worksheet('Routines')
+            
+            # Get existing routines
+            existing_routines = sheet_to_records(routines_sheet, is_routine_worksheet=True)
+            
+            # Create a map of ID to new order
+            order_map = {update['A']: update['D'] for update in updates}
+            
+            # Update orders for routines that are in the updates
+            for routine in existing_routines:
+                if routine['A'] in order_map:
+                    routine['D'] = order_map[routine['A']]
+            
+            # Write back to sheet
+            success = records_to_sheet(routines_sheet, existing_routines, is_routine_worksheet=True)
+            
+            if not success:
+                raise Exception("Failed to write updated order to sheet")
+                
+            return success
         
-        # Get existing routines
-        existing_routines = sheet_to_records(routines_sheet, is_routine_worksheet=True)
-        
-        # Create a map of ID to new order
-        order_map = {update['A']: update['D'] for update in updates}
-        
-        # Update orders for routines that are in the updates
-        for routine in existing_routines:
-            if routine['A'] in order_map:
-                routine['D'] = order_map[routine['A']]
-        
-        # Write back to sheet
-        success = records_to_sheet(routines_sheet, existing_routines, is_routine_worksheet=True)
+        # Use retry logic with exponential backoff
+        from app.sheets import retry_on_rate_limit
+        success = retry_on_rate_limit(do_update, max_retries=3, base_delay=2)
         
         if success:
             app.logger.debug("Successfully updated routines order")
             return jsonify({"success": True})
             
-        app.logger.error("Failed to write updated order to sheet")
-        return jsonify({"error": "Failed to update order"}), 500
-        
     except Exception as e:
         app.logger.error(f"Error updating routines order: {str(e)}")
+        error_str = str(e).lower()
+        # Check if it's a rate limit error to provide better feedback
+        if any(phrase in error_str for phrase in ['quota', 'rate limit', '429', 'too many']):
+            return jsonify({"error": "Google Sheets rate limit reached. Please wait a moment and try again."}), 429
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/open-folder', methods=['POST'])
