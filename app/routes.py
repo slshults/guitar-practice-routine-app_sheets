@@ -7,11 +7,11 @@ from app.sheets import ( # type: ignore
     create_routine, update_routine_order, update_routine_item,
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
     get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
-    records_to_sheet, get_chord_charts_for_item, add_chord_chart, 
+    records_to_sheet, get_chord_charts_for_item, add_chord_chart, batch_add_chord_charts,
     delete_chord_chart, update_chord_chart, update_chord_charts_order,
     get_common_chord_charts, search_common_chord_charts, seed_common_chord_charts, 
     bulk_import_chords_from_tormodkv, bulk_import_chords_from_local_file,
-    copy_chord_charts_to_items
+    copy_chord_charts_to_items, get_common_chords_efficiently
 )
 from google_auth_oauthlib.flow import Flow
 import os
@@ -24,6 +24,11 @@ import subprocess
 import platform
 from difflib import get_close_matches
 import re
+import base64
+import io
+import json
+from werkzeug.utils import secure_filename
+import anthropic
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -1148,6 +1153,80 @@ def update_songbook_paths():
         return jsonify({'error': str(e)}), 500
 
 # Chord Charts API endpoints
+@app.route('/api/chord-charts/batch', methods=['POST'])
+def batch_chord_charts():
+    """Get chord charts for multiple items in a single request"""
+    try:
+        data = request.get_json()
+        item_ids = data.get('item_ids', [])
+        
+        if not item_ids:
+            return jsonify([])
+        
+        # Get all chord charts from the sheet once
+        from app.sheets import get_spread, sheet_to_records, initialize_chordcharts_sheet
+        import json
+        
+        spread = get_spread()
+        initialize_chordcharts_sheet()
+        sheet = spread.worksheet('ChordCharts')
+        all_records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Build result dict for all requested items
+        result = {}
+        
+        for item_id in item_ids:
+            item_id_str = str(item_id)
+            item_charts = []
+            
+            # Filter records for this item
+            for r in all_records:
+                item_ids_in_record = r.get('B', '').split(',')
+                item_ids_in_record = [id.strip() for id in item_ids_in_record]
+                if item_id_str in item_ids_in_record:
+                    item_charts.append(r)
+            
+            # Sort by Order (column F)
+            item_charts.sort(key=lambda x: int(float(x.get('F', 0))))
+            
+            # Parse ChordData JSON for each chart
+            parsed_charts = []
+            for chart in item_charts:
+                try:
+                    chord_data_raw = chart.get('D', '{}')
+                    if not chord_data_raw or chord_data_raw.strip() in ['', '{}']:
+                        # Skip empty or corrupted chord data
+                        app.logger.warning(f"Skipping chord chart {chart.get('A', 'unknown')} with empty/corrupted data")
+                        continue
+                        
+                    chart_data = json.loads(chord_data_raw)
+                    
+                    # Validate essential chord data exists
+                    if not chart_data or not isinstance(chart_data, dict):
+                        app.logger.warning(f"Skipping chord chart {chart.get('A', 'unknown')} with invalid data structure")
+                        continue
+                    
+                    parsed_chart = {
+                        'id': int(chart.get('A', 0)),
+                        'itemId': item_id,
+                        'title': chart.get('C', ''),
+                        'createdAt': chart.get('E', ''),
+                        'order': int(float(chart.get('F', 0))),
+                        **chart_data
+                    }
+                    parsed_charts.append(parsed_chart)
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    app.logger.error(f"Error parsing chord chart data for chart {chart.get('A', 'unknown')}: {str(e)}")
+                    continue
+            
+            result[str(item_id)] = parsed_charts
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        app.logger.error(f"Error in batch chord charts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/items/<int:item_id>/chord-charts', methods=['GET', 'POST'])
 def chord_charts_for_item(item_id):
     """Get or create chord charts for an item."""
@@ -1479,3 +1558,371 @@ def debug_log_route():
     except Exception as e:
         app.logger.error(f"Error in debug log endpoint: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/autocreate-chord-charts', methods=['POST'])
+def autocreate_chord_charts():
+    """Autocreate chord charts from uploaded PDF/image files using Claude"""
+    try:
+        app.logger.debug("Starting autocreate chord charts process")
+        
+        # Check if files were uploaded
+        if not request.files:
+            return jsonify({'error': 'No files uploaded'}), 400
+            
+        item_id = request.form.get('itemId')
+        if not item_id:
+            return jsonify({'error': 'No itemId provided'}), 400
+            
+        app.logger.debug(f"Processing files for item ID: {item_id}")
+        
+        # Process uploaded files
+        file_contents = []
+        for key, file in request.files.items():
+            if file.filename == '':
+                continue
+                
+            # Validate file type and size
+            filename = secure_filename(file.filename)
+            if not filename:
+                continue
+                
+            # Check file size (10MB limit)
+            file.seek(0, os.SEEK_END)
+            file_size = file.tell()
+            file.seek(0)
+            
+            if file_size > 10 * 1024 * 1024:  # 10MB
+                return jsonify({'error': f'File {filename} is too large (max 10MB)'}), 400
+                
+            # Read file content
+            file_data = file.read()
+            
+            # Determine file type
+            file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
+            
+            if file_ext == 'pdf':
+                # For PDFs, we'll send the raw bytes and let Claude handle it
+                file_contents.append({
+                    'name': filename,
+                    'type': 'pdf',
+                    'data': base64.b64encode(file_data).decode('utf-8')
+                })
+            elif file_ext in ['png', 'jpg', 'jpeg']:
+                # For images, encode as base64
+                file_contents.append({
+                    'name': filename,
+                    'type': 'image',
+                    'data': base64.b64encode(file_data).decode('utf-8'),
+                    'media_type': f'image/{file_ext if file_ext != "jpg" else "jpeg"}'
+                })
+            else:
+                return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
+                
+        if not file_contents:
+            return jsonify({'error': 'No valid files found'}), 400
+            
+        # Get Anthropic API key from environment
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            return jsonify({'error': 'Anthropic API key not configured'}), 500
+            
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        # Prepare the Claude analysis request
+        app.logger.debug("Sending files to Claude for analysis")
+        
+        # Create the analysis prompt
+        analysis_result = analyze_files_with_claude(client, file_contents, item_id)
+        
+        app.logger.debug("Claude analysis complete, creating chord charts")
+        
+        return jsonify(analysis_result)
+        
+    except Exception as e:
+        app.logger.error(f"Error in autocreate chord charts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def analyze_files_with_claude(client, file_contents, item_id):
+    """Analyze uploaded files with Claude and create chord charts"""
+    try:
+        # Create message content with files
+        message_content = [
+            {
+                "type": "text",
+                "text": """I need you to analyze these chord chart files and extract the chord information to create a structured response for a guitar practice app.
+
+Please extract:
+1. Song metadata (tuning, capo position if any)
+2. ALL song sections - look carefully for Intro, Verse, Chorus, Bridge, Solo, Outro, Instrumental, etc. Include repeat indicators if shown
+3. Chord names for each section (we have a database of common chords, so just the chord names are needed)
+
+IMPORTANT: Look through the ENTIRE document to find ALL sections. Many songs have Solo and Outro sections that appear later in the document.
+
+Return your response as a JSON object with this structure:
+{
+  "tuning": "EADGBE",
+  "capo": 0,
+  "sections": [
+    {
+      "label": "Intro",
+      "repeatCount": "",
+      "chords": [{"name": "Em"}, {"name": "Am"}, {"name": "C"}, {"name": "G"}]
+    },
+    {
+      "label": "Verse", 
+      "repeatCount": "x2",
+      "chords": [{"name": "Em"}, {"name": "Am"}]
+    },
+    {
+      "label": "Chorus",
+      "repeatCount": "x2", 
+      "chords": [{"name": "C"}, {"name": "G"}, {"name": "D"}]
+    },
+    {
+      "label": "Solo",
+      "repeatCount": "",
+      "chords": [{"name": "Em"}, {"name": "C"}, {"name": "G"}, {"name": "D"}]
+    },
+    {
+      "label": "Outro", 
+      "repeatCount": "",
+      "chords": [{"name": "Em"}]
+    }
+  ]
+}
+
+Focus on extracting chord NAMES only - we will look up the fingerings from our chord database. Make sure to find ALL sections in the document, especially Solo and Outro sections which often appear at the end.
+
+Analyze the files and provide the structured chord data:"""
+            }
+        ]
+        
+        # Add files to message
+        for file_content in file_contents:
+            if file_content['type'] == 'pdf':
+                # For PDFs, use document format
+                message_content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": file_content['data']
+                    }
+                })
+            elif file_content['type'] == 'image':
+                # For images, use image format
+                message_content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": file_content['media_type'],
+                        "data": file_content['data']
+                    }
+                })
+        
+        # Call Claude API with proper timeout
+        # The anthropic client has built-in timeout support
+        try:
+            # Get API key
+            api_key = os.getenv('ANTHROPIC_API_KEY')
+            if not api_key:
+                raise ValueError("Anthropic API key not configured")
+                
+            # Create client with timeout
+            client_with_timeout = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=120.0  # 2 minute timeout
+            )
+            
+            message = client_with_timeout.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=4000,
+                messages=[{
+                    "role": "user",
+                    "content": message_content
+                }]
+            )
+        except anthropic.APITimeoutError:
+            raise TimeoutError("Claude API request timed out")
+        
+        # Parse Claude's response
+        response_text = message.content[0].text
+        
+        # Try to extract JSON from the response
+        try:
+            # Find JSON in the response (Claude might wrap it in markdown)
+            import re
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try to find JSON without markdown wrapper
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    raise ValueError("No valid JSON found in Claude's response")
+                    
+            chord_data = json.loads(json_str)
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            app.logger.error(f"Failed to parse Claude's response as JSON: {e}")
+            app.logger.error(f"Claude response was: {response_text}")
+            return {'error': f'Failed to parse chord data from analysis. Claude responded with: {response_text[:500]}...'}
+        
+        # Create chord charts from the structured data
+        created_charts = create_chord_charts_from_data(chord_data, item_id)
+        
+        return {
+            'success': True,
+            'message': f'Created {len(created_charts)} chord charts',
+            'charts': created_charts,
+            'analysis': chord_data
+        }
+        
+    except TimeoutError as e:
+        app.logger.error(f"Claude API timeout: {str(e)}")
+        return {'error': 'Analysis timed out. Please try with fewer or smaller files.'}
+    except Exception as e:
+        app.logger.error(f"Error in Claude analysis: {str(e)}")
+        # Check if it's an API error with more specific message
+        error_msg = str(e)
+        if 'rate_limit' in error_msg.lower() or '429' in error_msg:
+            return {'error': 'API rate limit reached. Please wait a moment and try again.'}
+        elif 'timeout' in error_msg.lower():
+            return {'error': 'Request timed out. Please try with fewer or smaller files.'}
+        else:
+            return {'error': f'Analysis failed: {str(e)}'}
+
+def create_chord_charts_from_data(chord_data, item_id):
+    """Create chord charts in Google Sheets from parsed chord data using batch operations"""
+    try:
+        created_charts = []
+        
+        # Extract tuning and capo from the analysis
+        tuning = chord_data.get('tuning', 'EADGBE')
+        capo = chord_data.get('capo', 0)
+        
+        # Pre-load all common chords efficiently to reduce API calls
+        try:
+            all_common_chords = get_common_chords_efficiently()
+            app.logger.info(f"Efficiently loaded {len(all_common_chords)} common chords for autocreate")
+        except Exception as e:
+            app.logger.warning(f"Failed to load common chords: {str(e)}")
+            all_common_chords = []
+        
+        # Collect all chord charts to create in one batch
+        all_chord_charts = []
+        chart_order = 0
+        
+        for section in chord_data.get('sections', []):
+            section_label = section.get('label', 'Section')
+            section_repeat = section.get('repeatCount', '')
+            
+            # Generate a unique section ID
+            import time
+            section_id = f"section-{int(time.time() * 1000)}"
+            
+            for chord in section.get('chords', []):
+                chord_name = chord.get('name', 'Unknown')
+                
+                # Find the chord in pre-loaded common chords (case-insensitive)
+                common_chord = None
+                chord_name_lower = chord_name.lower()
+                for common in all_common_chords:
+                    if common.get('title', '').lower() == chord_name_lower:
+                        common_chord = common
+                        app.logger.debug(f"Found {chord_name} in pre-loaded CommonChords")
+                        break
+                
+                if common_chord:
+                    # Use the chord from CommonChords
+                    chord_chart_data = {
+                        'title': chord_name,
+                        'tuning': common_chord.get('tuning', tuning),
+                        'capo': common_chord.get('capo', capo), 
+                        'startingFret': common_chord.get('startingFret', 1),
+                        'numFrets': common_chord.get('numFrets', 5),
+                        'numStrings': common_chord.get('numStrings', 6),
+                        'fingers': common_chord.get('fingers', []),
+                        'frets': common_chord.get('frets', []),
+                        'barres': common_chord.get('barres', []),
+                        'openStrings': common_chord.get('openStrings', []),
+                        'mutedStrings': common_chord.get('mutedStrings', []),
+                        'sectionId': section_id,
+                        'sectionLabel': section_label,
+                        'sectionRepeatCount': section_repeat
+                    }
+                else:
+                    # Fallback: use raw data from Claude (only if chord not found in CommonChords)
+                    frets = chord.get('frets', [])
+                    fingers = chord.get('fingers', [])
+                    starting_fret = chord.get('startingFret', 1)
+                    
+                    chord_chart_data = {
+                        'title': chord_name,
+                        'tuning': tuning,
+                        'capo': capo,
+                        'startingFret': starting_fret,
+                        'numFrets': 5,  # Default to 5 frets
+                        'numStrings': len(frets) if frets else 6,
+                        'fingers': fingers,
+                        'frets': frets,
+                        'barres': [],  # Could be enhanced to detect barres
+                        'sectionId': section_id,
+                        'sectionLabel': section_label,
+                        'sectionRepeatCount': section_repeat
+                    }
+                
+                # Include the order in the chord data itself
+                chord_chart_data['order'] = chart_order
+                all_chord_charts.append((chord_name, section_label, chord_chart_data))
+                chart_order += 1
+        
+        # Batch create all chord charts in one API call
+        if all_chord_charts:
+            chord_data_list = [chart_data for _, _, chart_data in all_chord_charts]
+            
+            app.logger.info(f"Batch creating {len(chord_data_list)} chord charts for item {item_id}")
+            batch_results = batch_add_chord_charts(item_id, chord_data_list)
+            
+            # Build response with chord names and sections
+            for (chord_name, section_label, _), result in zip(all_chord_charts, batch_results):
+                created_charts.append({
+                    'name': chord_name,
+                    'section': section_label,
+                    'id': result.get('id') if result else None
+                })
+        
+        return created_charts
+        
+    except Exception as e:
+        app.logger.error(f"Error creating chord charts: {str(e)}")
+        raise
+
+def add_chord_chart_with_backoff(item_id, chord_chart_data, max_retries=3):
+    """Add chord chart with exponential backoff for rate limiting"""
+    import time
+    from app.sheets import add_chord_chart
+    
+    for attempt in range(max_retries):
+        try:
+            return add_chord_chart(item_id, chord_chart_data)
+        except Exception as e:
+            error_str = str(e).lower()
+            if 'rate' in error_str or '429' in error_str or 'quota' in error_str:
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 2, 4, 8 seconds
+                    wait_time = 2 ** (attempt + 1)
+                    app.logger.warning(f"Rate limited, waiting {wait_time}s before retry {attempt + 1}/{max_retries}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    app.logger.error(f"Max retries reached for rate limiting: {str(e)}")
+                    raise
+            else:
+                # Non-rate limit error, don't retry
+                raise
+    
+    return None

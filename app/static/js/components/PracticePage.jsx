@@ -16,10 +16,20 @@ import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
 import { useItemDetails } from '@hooks/useItemDetails';
 import { usePracticeItems } from '@hooks/usePracticeItems';
-import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, ChevronUp, X } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
 import { serverDebug, serverInfo } from '../utils/logging';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Import at top to activate console overrides
 import '../utils/logging';
@@ -247,6 +257,7 @@ const MemoizedChordChart = memo(({ chart, onEdit, onDelete, onInsertAfter }) => 
 export const PracticePage = () => {
   const { routine } = useActiveRoutine();
   const { fetchItemDetails, getItemDetails, isLoadingItem } = useItemDetails();
+  
   const { items: allItems } = usePracticeItems();
   const [expandedItems, setExpandedItems] = useState(new Set());
   const [expandedNotes, setExpandedNotes] = useState(new Set());
@@ -271,6 +282,26 @@ export const PracticePage = () => {
   const [copySourceItemId, setCopySourceItemId] = useState(null);
   const [copySearchTerm, setCopySearchTerm] = useState('');
   const [selectedTargetItems, setSelectedTargetItems] = useState(new Set());
+  
+  // Autocreate chord charts from files
+  const [showDeleteChordsModal, setShowDeleteChordsModal] = useState(false);
+  const [deleteModalItemId, setDeleteModalItemId] = useState(null);
+  const [autocreateProgress, setAutocreateProgress] = useState({});
+  const [isDragActive, setIsDragActive] = useState({});
+  const [showAutocreateZone, setShowAutocreateZone] = useState({});
+  const [autocreateAbortController, setAutocreateAbortController] = useState({});
+  const [processingMessageIndex, setProcessingMessageIndex] = useState(0);
+  
+  // Rotating processing messages for entertainment
+  const processingMessages = [
+    "✨ Claude is making magic happen",
+    "Yeah, we all love instant gratification, but some things are worth waiting for",
+    "Good things come to those who wait",
+    "Chill. Patience is a virtue",
+    "You could be stretching or something while you wait, couldn't you?",
+    "Rome wasn't built in a day... neither are chord charts",
+    "Perfect chord charts take time to craft"
+  ];
 
   // Helper function to group chords into sections based on persisted metadata
   const getChordSections = (itemId) => {
@@ -534,6 +565,98 @@ export const PracticePage = () => {
 
 
   // Lazy-load chord charts only when chord section is expanded
+  // Batch load chord charts for all items in the routine
+  const loadAllChordCharts = useCallback(async () => {
+    if (!routine || !routine.items) return;
+    
+    // Get all item IDs that need chord charts loaded
+    const itemIds = routine.items
+      .map(item => item['B']) // Column B is Item ID
+      .filter(itemId => !chordCharts[itemId]); // Only load if not already loaded
+    
+    if (itemIds.length === 0) return;
+    
+    try {
+      const response = await fetch('/api/chord-charts/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_ids: itemIds })
+      });
+      
+      if (response.ok) {
+        const batchResults = await response.json();
+        
+        // Update chord charts state with all results
+        setChordCharts(prev => ({
+          ...prev,
+          ...batchResults
+        }));
+        
+        // Build sections for each item using existing getChordSections logic
+        Object.entries(batchResults).forEach(([itemId, charts]) => {
+          if (charts.length === 0) {
+            setChordSections(prev => ({
+              ...prev,
+              [itemId]: []
+            }));
+          } else {
+            // Group chords by their section metadata (same logic as getChordSections)
+            const sectionMap = new Map();
+            
+            charts.forEach(chart => {
+              const sectionId = chart.sectionId || 'section-1';
+              const sectionLabel = chart.sectionLabel || 'Verse';
+              const sectionRepeatCount = chart.sectionRepeatCount || '';
+              
+              if (!sectionMap.has(sectionId)) {
+                sectionMap.set(sectionId, {
+                  id: sectionId,
+                  label: sectionLabel,
+                  repeatCount: sectionRepeatCount,
+                  chords: []
+                });
+              }
+              
+              sectionMap.get(sectionId).chords.push(chart);
+            });
+            
+            const sections = Array.from(sectionMap.values());
+            setChordSections(prev => ({
+              ...prev,
+              [itemId]: sections
+            }));
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error batch loading chord charts:', error);
+    }
+  }, [routine, chordCharts]);
+  
+  // Batch load chord charts when routine changes
+  useEffect(() => {
+    if (routine && routine.items) {
+      loadAllChordCharts();
+    }
+  }, [routine, loadAllChordCharts]);
+  
+  // Rotate processing messages every 10 seconds
+  useEffect(() => {
+    const processingItems = Object.values(autocreateProgress).filter(progress => progress === 'processing');
+    
+    if (processingItems.length === 0) {
+      // Reset message index when no processing
+      setProcessingMessageIndex(0);
+      return;
+    }
+    
+    const interval = setInterval(() => {
+      setProcessingMessageIndex(prev => (prev + 1) % processingMessages.length);
+    }, 10000); // 10 seconds
+    
+    return () => clearInterval(interval);
+  }, [autocreateProgress, processingMessages.length]);
+  
   const loadChordChartsForItem = async (itemReferenceId) => {
     // Skip if already loaded
     if (chordCharts[itemReferenceId]) {
@@ -1520,6 +1643,235 @@ export const PracticePage = () => {
     }
   };
 
+  // Autocreate functions
+  const handleAutocreateClick = (itemId) => {
+    const existingCharts = chordCharts[itemId] || [];
+    if (existingCharts.length > 0) {
+      // Show modal asking to delete existing charts
+      setDeleteModalItemId(itemId);
+      setShowDeleteChordsModal(true);
+    } else {
+      // No existing charts, proceed with file selection
+      // This will be handled by the drag-and-drop zone
+    }
+  };
+
+  const handleDeleteExistingCharts = async () => {
+    if (!deleteModalItemId) return;
+    
+    try {
+      // Delete all chord charts for this item
+      const existingCharts = chordCharts[deleteModalItemId] || [];
+      for (const chart of existingCharts) {
+        const response = await fetch(`/api/chord-charts/${chart.id}`, {
+          method: 'DELETE'
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to delete chord chart ${chart.id}`);
+        }
+      }
+      
+      // Force refresh chord charts (clear state first since all charts are deleted)
+      setChordCharts(prev => ({
+        ...prev,
+        [deleteModalItemId]: []
+      }));
+      setChordSections(prev => ({
+        ...prev,
+        [deleteModalItemId]: []
+      }));
+      
+      // Close modal
+      setShowDeleteChordsModal(false);
+      setDeleteModalItemId(null);
+    } catch (error) {
+      console.error('Error deleting existing chord charts:', error);
+    }
+  };
+
+  const handleCancelAutocreate = (itemId) => {
+    // Cancel the request if it's in progress
+    if (autocreateAbortController[itemId]) {
+      autocreateAbortController[itemId].abort();
+    }
+    
+    // Reset state
+    setAutocreateProgress(prev => {
+      const newState = { ...prev };
+      delete newState[itemId];
+      return newState;
+    });
+    setAutocreateAbortController(prev => {
+      const newState = { ...prev };
+      delete newState[itemId];
+      return newState;
+    });
+  };
+
+  const handleFileDrop = async (itemId, files) => {
+    if (!files || files.length === 0) return;
+    
+    // Validate file count
+    if (files.length > 5) {
+      alert('Maximum 5 files allowed. Please select fewer files.');
+      return;
+    }
+    
+    try {
+      setAutocreateProgress({ [itemId]: 'uploading' });
+      
+      // Create abort controller for this request
+      const abortController = new AbortController();
+      setAutocreateAbortController(prev => ({ ...prev, [itemId]: abortController }));
+      
+      const formData = new FormData();
+      Array.from(files).forEach((file, index) => {
+        formData.append(`file${index}`, file);
+      });
+      formData.append('itemId', itemId);
+      
+      // Show uploading for minimum 2 seconds, then switch to processing
+      const startTime = Date.now();
+      const minDisplayTime = 2000;
+      
+      setTimeout(() => {
+        setAutocreateProgress({ [itemId]: 'processing' });
+      }, minDisplayTime);
+      
+      const response = await fetch('/api/autocreate-chord-charts', {
+        method: 'POST',
+        body: formData,
+        signal: abortController.signal
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to process files');
+      }
+      
+      const result = await response.json();
+      
+      setAutocreateProgress({ [itemId]: 'complete' });
+      
+      // Force refresh chord charts for this item (don't use loadChordChartsForItem as it skips if already loaded)
+      try {
+        const response = await fetch(`/api/items/${itemId}/chord-charts`);
+        if (response.ok) {
+          const charts = await response.json();
+          
+          // Update chord charts state like manual creation does
+          setChordCharts(prev => ({
+            ...prev,
+            [itemId]: charts
+          }));
+          
+          // Build sections from loaded chord charts
+          if (charts.length === 0) {
+            setChordSections(prev => ({
+              ...prev,
+              [itemId]: []
+            }));
+          } else {
+            // Group chords by their section metadata (same logic as getChordSections)
+            const sectionMap = new Map();
+            
+            charts.forEach(chart => {
+              const sectionId = chart.sectionId || 'section-1';
+              const sectionLabel = chart.sectionLabel || 'Verse';
+              const sectionRepeatCount = chart.sectionRepeatCount || '';
+              
+              if (!sectionMap.has(sectionId)) {
+                sectionMap.set(sectionId, {
+                  id: sectionId,
+                  label: sectionLabel,
+                  repeatCount: sectionRepeatCount,
+                  chords: []
+                });
+              }
+              
+              sectionMap.get(sectionId).chords.push(chart);
+            });
+            
+            // Convert to array and sort sections by the order of their first chord
+            const sections = Array.from(sectionMap.values()).sort((a, b) => {
+              const aMinOrder = Math.min(...a.chords.map(c => c.order || 0));
+              const bMinOrder = Math.min(...b.chords.map(c => c.order || 0));
+              return aMinOrder - bMinOrder;
+            });
+            
+            // Sort chords within each section by order
+            sections.forEach(section => {
+              section.chords.sort((a, b) => (a.order || 0) - (b.order || 0));
+            });
+            
+            setChordSections(prev => ({
+              ...prev,
+              [itemId]: sections
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to refresh chord charts after autocreate:', error);
+      }
+      
+      // Clear progress and close autocreate zone after a delay
+      setTimeout(() => {
+        setAutocreateProgress(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+        setShowAutocreateZone(prev => ({ ...prev, [itemId]: false }));
+        setAutocreateAbortController(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+      }, 5000);
+      
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('Autocreate request was cancelled');
+        return;
+      }
+      
+      console.error('Error in autocreate:', error);
+      setAutocreateProgress({ [itemId]: 'error' });
+      
+      // Clear error state after delay
+      setTimeout(() => {
+        setAutocreateProgress(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+        setAutocreateAbortController(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+      }, 5000);
+    }
+  };
+
+  const handleDragOver = (e, itemId) => {
+    e.preventDefault();
+    setIsDragActive(prev => ({ ...prev, [itemId]: true }));
+  };
+
+  const handleDragLeave = (e, itemId) => {
+    e.preventDefault();
+    setIsDragActive(prev => ({ ...prev, [itemId]: false }));
+  };
+
+  const handleDrop = (e, itemId) => {
+    e.preventDefault();
+    setIsDragActive(prev => ({ ...prev, [itemId]: false }));
+    
+    const files = e.dataTransfer.files;
+    handleFileDrop(itemId, files);
+  };
+
   const toggleChordEditor = (itemId, e) => {
     e?.stopPropagation();
     setShowChordEditor(prev => {
@@ -1812,6 +2164,152 @@ export const PracticePage = () => {
                                 {showChordEditor[itemReferenceId] ? 'Hide Chord Editor' : 'Add New Chord'}
                               </Button>
 
+                              {/* Autocreate from files - collapsible section */}
+                              {(() => {
+                                const existingCharts = chordCharts[itemReferenceId] || [];
+                                const progress = autocreateProgress[itemReferenceId];
+                                const dragActive = isDragActive[itemReferenceId];
+                                const zoneExpanded = showAutocreateZone[itemReferenceId];
+                                
+                                if (existingCharts.length === 0) {
+                                  // No existing charts - show expandable autocreate
+                                  return (
+                                    <div className="w-full mb-4">
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => setShowAutocreateZone(prev => ({ 
+                                          ...prev, 
+                                          [itemReferenceId]: !prev[itemReferenceId] 
+                                        }))}
+                                        className="w-full border-green-600 text-green-300 hover:bg-green-800 mb-2 flex items-center justify-center"
+                                      >
+                                        <Upload className="h-4 w-4 mr-2" />
+                                        Autocreate Chord Charts
+                                      </Button>
+                                      
+                                      {zoneExpanded && (
+                                        <div className="border border-green-600/30 rounded-lg p-4 bg-green-900/10">
+                                          <p className="text-sm text-gray-400 mb-4">
+                                            Upload an image or PDF with the chord names in labeled sections (Intro, Verse, Chorus, Bridge, etc.), e.g. a lyrics sheet with the guitar chord names above the lyrics. Include the tuning, and capo placement (if any).
+                                            <br /><br />
+                                            For non-standard tunings and/or custom fingerings, also upload an image or PDF showing examples of the chord charts you want added.
+                                          </p>
+                                          
+                                          <div
+                                            className={`w-full p-6 border-2 border-dashed rounded-lg transition-colors ${
+                                              progress ? 'cursor-default' : 'cursor-pointer'
+                                            } ${
+                                              dragActive 
+                                                ? 'border-blue-400 bg-blue-900/20' 
+                                                : progress 
+                                                  ? 'border-gray-700 bg-gray-800/50' 
+                                                  : 'border-gray-600 hover:border-gray-500'
+                                            }`}
+                                            onDragOver={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDragOver(e, itemReferenceId) : undefined}
+                                            onDragLeave={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDragLeave(e, itemReferenceId) : undefined}
+                                            onDrop={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDrop(e, itemReferenceId) : undefined}
+                                            onClick={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? () => {
+                                              // Trigger file input
+                                              const input = document.createElement('input');
+                                              input.type = 'file';
+                                              input.multiple = true;
+                                              input.accept = '.pdf,.png,.jpg,.jpeg';
+                                              input.onchange = (e) => handleFileDrop(itemReferenceId, e.target.files);
+                                              input.click();
+                                            } : undefined}
+                                          >
+                                            <div className="text-center">
+                                              {progress === 'uploading' && (
+                                                <div className="space-y-3">
+                                                  <div className="flex items-center justify-center space-x-2">
+                                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                                                    <span className="text-blue-400">Uploading files...</span>
+                                                  </div>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleCancelAutocreate(itemReferenceId)}
+                                                    className="text-gray-400 hover:text-gray-200 border-gray-600"
+                                                  >
+                                                    <X className="h-3 w-3 mr-1" />
+                                                    Cancel
+                                                  </Button>
+                                                </div>
+                                              )}
+                                              {progress === 'processing' && (
+                                                <div className="space-y-3">
+                                                  <div className="flex items-center justify-center space-x-2">
+                                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
+                                                    <div className="flex items-center">
+                                                      <span className="text-purple-400">{processingMessages[processingMessageIndex]}</span>
+                                                      <div className="ml-2 animate-spin">⚙️</div>
+                                                    </div>
+                                                  </div>
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleCancelAutocreate(itemReferenceId)}
+                                                    className="text-gray-400 hover:text-gray-200 border-gray-600"
+                                                  >
+                                                    <X className="h-3 w-3 mr-1" />
+                                                    Cancel
+                                                  </Button>
+                                                </div>
+                                              )}
+                                              {progress === 'complete' && (
+                                                <div className="flex items-center justify-center space-x-2">
+                                                  <Check className="h-4 w-4 text-green-500" />
+                                                  <span className="text-green-400">Chord charts created!</span>
+                                                </div>
+                                              )}
+                                              {progress === 'error' && (
+                                                <div className="flex items-center justify-center space-x-2">
+                                                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                                                  <span className="text-red-400">Error processing files. Please try again.</span>
+                                                </div>
+                                              )}
+                                              {!progress && (
+                                                <>
+                                                  {chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0 ? (
+                                                    <>
+                                                      <AlertTriangle className="h-8 w-8 text-orange-400 mx-auto mb-2" />
+                                                      <p className="text-orange-300 font-medium mb-1">Chord charts already exist</p>
+                                                      <p className="text-gray-400 text-sm">
+                                                        Please delete all chord charts from this song before using autocreate
+                                                      </p>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                                                      <p className="text-gray-300 font-medium mb-1">Drop files here or click to browse</p>
+                                                      <p className="text-gray-500 text-sm">
+                                                        5 files max, 10MB each • Supports PDF, PNG, JPG
+                                                      </p>
+                                                    </>
+                                                  )}
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                } else {
+                                  // Has existing charts - show replace option
+                                  return (
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => handleAutocreateClick(itemReferenceId)}
+                                      className="w-full mb-4 border-orange-600 text-orange-300 hover:bg-orange-800"
+                                    >
+                                      <Upload className="h-4 w-4 mr-2" />
+                                      Replace with autocreated charts
+                                    </Button>
+                                  );
+                                }
+                              })()}
+
                               <Button
                                 variant="outline"
                                 onClick={() => addNewSection(itemReferenceId)}
@@ -2034,6 +2532,36 @@ export const PracticePage = () => {
           </div>
         </div>
       )}
+
+      {/* Delete Existing Chord Charts Modal */}
+      <AlertDialog open={showDeleteChordsModal} onOpenChange={setShowDeleteChordsModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2">
+              <AlertTriangle className="h-5 w-5 text-orange-500" />
+              <span>Replace Existing Chord Charts</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This song already has chord charts. To use autocreate, all existing chord charts must be deleted first. 
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowDeleteChordsModal(false);
+              setDeleteModalItemId(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteExistingCharts}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              Delete All & Autocreate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }; 

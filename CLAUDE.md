@@ -21,6 +21,10 @@ This is a **Guitar Practice Assistant** - a web application that helps musicians
 ./gpr.sh                 # Starts Flask server + Vite watcher (recommended)
 ```
 
+### Environment Setup
+- Set `ANTHROPIC_API_KEY` in `.env` file for autocreate chord charts feature
+- API key can be obtained from [Anthropic Console](https://console.anthropic.com/)
+
 ### Frontend Build Commands
 ```bash
 npm run build           # Build production assets
@@ -91,9 +95,10 @@ The `gpr.sh` script runs:
 - `/api/routines/*`: CRUD operations for practice routines
 - `/api/practice/active-routine`: Get/set active practice routine
 - `/api/auth/status`: Check authentication status
-- `/api/items/<id>/chord-charts`: Get/create chord charts for practice items (NEW)
-- `/api/chord-charts/<id>`: Delete chord charts (NEW)
-- `/api/items/<id>/chord-charts/order`: Reorder chord charts (NEW)
+- `/api/items/<id>/chord-charts`: Get/create chord charts for practice items
+- `/api/chord-charts/<id>`: Delete chord charts
+- `/api/items/<id>/chord-charts/order`: Reorder chord charts  
+- `/api/autocreate-chord-charts`: Upload files for AI-powered chord chart creation (requires ANTHROPIC_API_KEY)
 
 ## Special Considerations
 
@@ -110,6 +115,7 @@ The `gpr.sh` script runs:
 - SVGuitar integration for chord chart rendering
 - Tuning tracking and display
 - Chord chart editor with interactive grid interface
+- **Autocreate chord charts**: Upload PDFs/images → Claude analyzes files → automatically creates chord charts with proper sections, tuning, and fingerings
 
 ### Build and Assets
 - Vite compiles React/JSX and outputs to `app/static/`
@@ -323,5 +329,60 @@ For debugging during development, you can access server logs via:
 - **Console logging**: Browser console shows frontend errors and debug messages
 
 **Log Rotation**: Logs automatically rotate at 50MB with 2 backup files (100MB total max)
+
+## Performance Patterns & Optimizations
+
+### Google Sheets API Rate Limiting (60 requests/minute/user)
+**Critical**: Always use batch operations to minimize API calls, especially for chord chart operations.
+
+#### Batch Operations Pattern:
+- **Bad**: Individual `add_chord_chart()` calls for each chord (20+ API calls)
+- **Good**: `batch_add_chord_charts()` with all chords at once (3 total API calls)
+- **Implementation**: Use `batch_add_chord_charts(item_id, chord_charts_data)` in `sheets.py`
+
+#### CommonChords Performance:
+- **Fixed Range**: `get_common_chords_efficiently()` uses fixed range `A2:F12710` (12,709 chord records)
+- **No Dynamic Detection**: Avoids extra API calls to determine data range
+- **Pre-loading**: Load CommonChords once at start of autocreate, reuse for all chord lookups
+
+### Frontend State Management
+
+#### UI Refresh After Backend Operations:
+**Critical Pattern**: Don't rely on conditional loaders like `loadChordChartsForItem()` which skip if data already exists.
+
+**Correct Pattern for Immediate UI Updates:**
+```javascript
+// Force refresh with fresh API call
+const response = await fetch(`/api/items/${itemId}/chord-charts`);
+const charts = await response.json();
+
+// Direct state updates
+setChordCharts(prev => ({
+  ...prev,
+  [itemId]: charts
+}));
+
+setChordSections(prev => ({
+  ...prev,
+  [itemId]: buildSectionsFromCharts(charts)
+}));
+```
+
+**Applied in:**
+- Autocreate completion handler
+- Delete operations
+- Manual chord creation
+
+### Autocreate System Optimizations
+
+#### Rate Limiting Prevention:
+1. **Pre-load CommonChords**: Single API call at start
+2. **Batch Creation**: All chords created in one operation
+3. **Smart Blocking**: Prevent autocreate when charts already exist
+
+#### User Experience:
+- Clear warning when trying autocreate on items with existing charts
+- Progress messages with rotating content during processing
+- Immediate UI refresh after completion
 
 Anon, we rock n roll 🙌🤘🎸...

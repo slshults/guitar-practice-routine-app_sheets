@@ -134,10 +134,15 @@ def invalidate_caches():
     get_credentials.cache_clear()
     get_spread.cache_clear()
 
-def sheet_to_records(worksheet, is_routine_worksheet=True):
+def sheet_to_records(worksheet, is_routine_worksheet=True, max_empty_rows=50):
     """Convert worksheet data to list of dictionaries.
     This function is header-row agnostic - it uses column letters (A, B, C...) 
     to read and write data, ignoring whatever content might be in row 1.
+    
+    Args:
+        worksheet: The worksheet to read from
+        is_routine_worksheet: Whether this is a routine worksheet (affects column count)
+        max_empty_rows: Maximum consecutive empty rows before stopping (default 50)
     """
     try:
         # Get number of columns based on sheet type
@@ -148,17 +153,52 @@ def sheet_to_records(worksheet, is_routine_worksheet=True):
         else:
             num_columns = ITEMS_COLUMNS
         
-        # Get all values starting from row 2 (data rows only), up to the last needed column
         last_col = chr(ord('A') + num_columns - 1)
         
-        # Explicitly request all columns up to last_col
-        range_str = f'A2:{last_col}'
+        # For large sheets like CommonChords, try to find the actual end first
+        if worksheet.title in ['CommonChords', 'ChordCharts', 'Items'] and num_columns > 3:
+            try:
+                # Get the first column to find where data ends
+                col_a_values = worksheet.col_values(1)  # Column A values
+                if len(col_a_values) <= 1:  # Only header or empty
+                    return []
+                
+                # Find the last row with data by looking for consecutive empty cells
+                last_row_with_data = len(col_a_values)
+                empty_count = 0
+                
+                for i in range(len(col_a_values) - 1, 0, -1):  # Go backwards from end
+                    if not col_a_values[i] or not str(col_a_values[i]).strip():
+                        empty_count += 1
+                        if empty_count >= max_empty_rows:
+                            last_row_with_data = i + max_empty_rows  # Keep some buffer
+                            break
+                    else:
+                        empty_count = 0
+                
+                # Ensure we don't go below row 2 (first data row)
+                last_row_with_data = max(last_row_with_data, 2)
+                
+                # If we detected a reasonable endpoint, use it
+                if last_row_with_data < len(col_a_values) * 0.8:  # Only if we saved at least 20%
+                    range_str = f'A2:{last_col}{last_row_with_data}'
+                    logging.info(f"Optimized range for {worksheet.title}: {range_str} (saved {len(col_a_values) - last_row_with_data} empty rows)")
+                else:
+                    range_str = f'A2:{last_col}'
+                    logging.debug(f"Using full range for {worksheet.title}: {range_str}")
+            except Exception as e:
+                logging.warning(f"Failed to optimize range for {worksheet.title}, using full range: {str(e)}")
+                range_str = f'A2:{last_col}'
+        else:
+            # For smaller sheets, use the original approach
+            range_str = f'A2:{last_col}'
+        
         data_range = worksheet.get(range_str, value_render_option='FORMATTED_VALUE')  # Get values as strings
         if not data_range:  # No data rows
             return []
             
         data_rows = data_range
-        logging.debug(f"Number of data rows: {len(data_rows)}")
+        logging.debug(f"Number of data rows loaded from {worksheet.title}: {len(data_rows)}")
         
         # Convert rows to records using column letters
         processed_records = []
@@ -177,10 +217,10 @@ def sheet_to_records(worksheet, is_routine_worksheet=True):
             processed_records.append(record)
         
         # Log the sequences for debugging
-        logging.debug(f"ID sequence: {[r.get('A') for r in processed_records]}")
+        logging.debug(f"ID sequence: {[r.get('A') for r in processed_records[:10]]}")  # Only show first 10
         if worksheet.title != 'Routines':  # Only show order sequence for non-Routines sheets
             order_col = 'C' if is_routine_worksheet else 'G'
-            logging.debug(f"Order sequence: {[r.get(order_col) for r in processed_records]}")
+            logging.debug(f"Order sequence: {[r.get(order_col) for r in processed_records[:10]]}")  # Only show first 10
         
         return processed_records
     except Exception as e:
@@ -970,7 +1010,19 @@ def get_chord_charts_for_item(item_id):
         for chart in item_charts:
             try:
                 import json
-                chart_data = json.loads(chart.get('D', '{}'))  # Column D = ChordData
+                chord_data_raw = chart.get('D', '{}')  # Column D = ChordData
+                
+                # Skip empty or corrupted chord data
+                if not chord_data_raw or chord_data_raw.strip() in ['', '{}']:
+                    logging.warning(f"Skipping chord chart {chart.get('A', 'unknown')} with empty/corrupted data")
+                    continue
+                
+                chart_data = json.loads(chord_data_raw)
+                
+                # Validate essential chord data exists
+                if not chart_data or not isinstance(chart_data, dict):
+                    logging.warning(f"Skipping chord chart {chart.get('A', 'unknown')} with invalid data structure")
+                    continue
                 
                 # Ensure hasLineBreakAfter field exists for all chords
                 if 'hasLineBreakAfter' not in chart_data:
@@ -984,8 +1036,8 @@ def get_chord_charts_for_item(item_id):
                     'order': chart.get('F'),  # Column F = Order
                     **chart_data  # Spread the chord data (fingers, barres, tuning, etc.)
                 })
-            except json.JSONDecodeError:
-                logging.error(f"Invalid JSON in chord chart {chart.get('A')}")
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                logging.error(f"Error parsing chord chart data for chart {chart.get('A', 'unknown')}: {str(e)}")
                 continue
                 
         return parsed_charts
@@ -1130,6 +1182,106 @@ def add_chord_chart(item_id, chord_data):
     except Exception as e:
         logging.error(f"Error adding chord chart: {str(e)}")
         raise ValueError(f"Failed to add chord chart: {str(e)}")
+
+def batch_add_chord_charts(item_id, chord_charts_data):
+    """Add multiple chord charts for an item in a single operation to avoid rate limiting."""
+    try:
+        import json
+        from datetime import datetime
+        
+        if not chord_charts_data:
+            return []
+            
+        spread = get_spread()
+        
+        # Initialize sheet if it doesn't exist
+        initialize_chordcharts_sheet()
+        
+        sheet = spread.worksheet('ChordCharts')
+        records = sheet_to_records(sheet, is_routine_worksheet=False)
+        
+        # Generate new ChordIDs starting from max existing
+        max_id = max([int(float(r.get('A', 0))) for r in records if r.get('A')], default=0)
+        
+        # Get all ItemIDs that should be included for this item
+        item_id_str = str(item_id)
+        all_item_ids = set([item_id_str])
+        
+        # Find all chord charts that include this item ID to preserve multi-item associations
+        for record in records:
+            record_item_ids = record.get('B', '').split(',')
+            record_item_ids = [id.strip() for id in record_item_ids if id.strip()]
+            if item_id_str in record_item_ids:
+                all_item_ids.update(record_item_ids)
+        
+        item_ids_str = ', '.join(sorted(all_item_ids))
+        
+        # Get highest order for this item
+        item_charts = [r for r in records if item_id_str in [id.strip() for id in r.get('B', '').split(',')]]
+        max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
+        
+        # Create all new records
+        new_records = []
+        timestamp = datetime.now().strftime('%Y-%m-%d %I:%M%p PST')
+        
+        for i, chord_data in enumerate(chord_charts_data):
+            new_id = max_id + i + 1
+            new_order = max_order + i + 1
+            
+            title = chord_data.get('title', 'Untitled Chord')
+            chord_json = json.dumps({
+                'fingers': chord_data.get('fingers', []),
+                'barres': chord_data.get('barres', []),
+                'numFrets': chord_data.get('numFrets', 5),
+                'numStrings': chord_data.get('numStrings', 6),
+                'tuning': chord_data.get('tuning', 'EADGBE'),
+                'capo': chord_data.get('capo', 0),
+                'openStrings': chord_data.get('openStrings', []),
+                'mutedStrings': chord_data.get('mutedStrings', []),
+                'startingFret': chord_data.get('startingFret', 1),
+                # Section metadata
+                'sectionId': chord_data.get('sectionId', 'section-1'),
+                'sectionLabel': chord_data.get('sectionLabel', ''),
+                'sectionRepeatCount': chord_data.get('sectionRepeatCount', ''),
+                # Line break functionality
+                'hasLineBreakAfter': chord_data.get('hasLineBreakAfter', False)
+            })
+            
+            new_record = {
+                'A': str(new_id),      # ChordID
+                'B': item_ids_str,     # ItemID (comma-separated if shared)
+                'C': title,            # Title
+                'D': chord_json,       # ChordData
+                'E': timestamp,        # CreatedAt
+                'F': str(new_order)    # Order
+            }
+            
+            new_records.append(new_record)
+        
+        # Add all new records to the sheet in one operation
+        records.extend(new_records)
+        success = records_to_sheet(sheet, records, is_routine_worksheet=False)
+        
+        if success:
+            invalidate_caches()
+            # Return the created chord chart data
+            created_charts = []
+            for i, new_record in enumerate(new_records):
+                created_charts.append({
+                    'id': int(new_record['A']),
+                    'itemId': item_id,
+                    'title': new_record['C'],
+                    'createdAt': new_record['E'],
+                    'order': int(new_record['F']),
+                    **json.loads(new_record['D'])
+                })
+            return created_charts
+            
+        return []
+        
+    except Exception as e:
+        logging.error(f"Error batch adding chord charts: {str(e)}")
+        raise ValueError(f"Failed to batch add chord charts: {str(e)}")
 
 def delete_chord_chart(chord_id):
     """Delete a chord chart by ID."""
@@ -1469,13 +1621,34 @@ def search_common_chord_charts(chord_name):
                     chord_data_str = row[3] if len(row) > 3 else '{}'
                     chord_data = json.loads(chord_data_str) if chord_data_str else {}
                     
+                    # Normalize finger data format - handle both object and array formats
+                    raw_fingers = chord_data.get('fingers', [])
+                    normalized_fingers = []
+                    
+                    for finger in raw_fingers:
+                        if isinstance(finger, dict):
+                            # Object format: {"string": 3, "fret": 2, "finger": 1}
+                            string_num = finger.get('string')
+                            fret_num = finger.get('fret') 
+                            finger_num = finger.get('finger')
+                            if string_num is not None and fret_num is not None:
+                                if finger_num is not None:
+                                    normalized_fingers.append([string_num, fret_num, finger_num])
+                                else:
+                                    normalized_fingers.append([string_num, fret_num])
+                        elif isinstance(finger, list) and len(finger) >= 2:
+                            # Array format: [3, 2] or [3, 2, 1]
+                            normalized_fingers.append(finger)
+                        else:
+                            logging.warning(f"Skipping invalid finger data: {finger}")
+                    
                     chord_chart = {
                         'id': row[0],
                         'itemId': row[1] if len(row) > 1 else 'common',
                         'title': row[2] if len(row) > 2 else chord_name,
                         'createdAt': row[4] if len(row) > 4 else '',
                         'order': int(float(row[5])) if len(row) > 5 and row[5] else 0,
-                        'fingers': chord_data.get('fingers', []),
+                        'fingers': normalized_fingers,
                         'barres': chord_data.get('barres', []),
                         'numFrets': chord_data.get('numFrets', 5),
                         'numStrings': chord_data.get('numStrings', 6),
@@ -2055,3 +2228,78 @@ def copy_chord_charts_to_items(source_item_id, target_item_ids):
     except Exception as e:
         logging.error(f"Error copying chord charts: {str(e)}")
         raise ValueError(f"Failed to copy chord charts: {str(e)}")
+
+def get_common_chords_efficiently():
+    """Get all common chord charts efficiently using fixed range (12,710 total rows)."""
+    try:
+        spread = get_spread()
+        
+        # Try to get the CommonChords sheet
+        try:
+            sheet = spread.worksheet('CommonChords')
+        except gspread.WorksheetNotFound:
+            logging.info("CommonChords sheet not found")
+            return []
+        
+        # Use fixed range since CommonChords sheet has exactly 12,710 rows (header + 12,709 data rows)
+        range_str = 'A2:F12710'
+        logging.info(f"Loading CommonChords fixed range {range_str} (12,709 chord records)")
+        data_range = sheet.get(range_str, value_render_option='FORMATTED_VALUE')
+        
+        if not data_range:
+            return []
+        
+        # Convert to normalized format for autocreate
+        all_common_chords = []
+        for row in data_range:
+            # Ensure row has all 6 columns
+            padded_row = row + [''] * (6 - len(row))
+            
+            # Skip if title (column C, index 2) is empty
+            if not padded_row[2] or not padded_row[2].strip():
+                continue
+                
+            try:
+                chord_data_str = padded_row[3] if len(padded_row) > 3 else '{}'
+                chord_data = json.loads(chord_data_str) if chord_data_str else {}
+                
+                # Normalize finger data (same as autocreate logic)
+                raw_fingers = chord_data.get('fingers', [])
+                normalized_fingers = []
+                
+                for finger in raw_fingers:
+                    if isinstance(finger, dict):
+                        string_num = finger.get('string')
+                        fret_num = finger.get('fret') 
+                        finger_num = finger.get('finger')
+                        if string_num is not None and fret_num is not None:
+                            if finger_num is not None:
+                                normalized_fingers.append([string_num, fret_num, finger_num])
+                            else:
+                                normalized_fingers.append([string_num, fret_num])
+                    elif isinstance(finger, list) and len(finger) >= 2:
+                        normalized_fingers.append(finger)
+                
+                all_common_chords.append({
+                    'title': padded_row[2],  # Column C
+                    'fingers': normalized_fingers,
+                    'barres': chord_data.get('barres', []),
+                    'numFrets': chord_data.get('numFrets', 5),
+                    'numStrings': chord_data.get('numStrings', 6),
+                    'tuning': chord_data.get('tuning', 'EADGBE'),
+                    'capo': chord_data.get('capo', 0),
+                    'openStrings': chord_data.get('openStrings', []),
+                    'mutedStrings': chord_data.get('mutedStrings', []),
+                    'startingFret': chord_data.get('startingFret', 1)
+                })
+                
+            except Exception as e:
+                logging.warning(f"Failed to parse common chord {padded_row[2] if len(padded_row) > 2 else 'unknown'}: {str(e)}")
+                continue
+        
+        logging.info(f"Efficiently loaded {len(all_common_chords)} common chords using fixed range A2:F12710")
+        return all_common_chords
+        
+    except Exception as e:
+        logging.error(f"Error in get_common_chords_efficiently: {str(e)}")
+        return []
