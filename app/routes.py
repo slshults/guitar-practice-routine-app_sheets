@@ -673,6 +673,9 @@ def get_active_routine_with_details():
                 "routineEntry": routine_item,
                 "itemDetails": item_details
             })
+        
+        # Sort items by order (Column C)
+        items_with_details.sort(key=lambda x: int(x['routineEntry']['C']) if x['routineEntry']['C'] else 0)
 
         return jsonify({
             "active_id": active_id,
@@ -744,6 +747,9 @@ def get_active_routine_lightweight():
                 "routineEntry": routine_item,
                 "itemMinimal": item_minimal
             })
+        
+        # Sort items by order (Column C)
+        items_with_minimal_details.sort(key=lambda x: int(x['routineEntry']['C']) if x['routineEntry']['C'] else 0)
 
         return jsonify({
             "active_id": active_id,
