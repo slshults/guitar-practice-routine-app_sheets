@@ -1218,7 +1218,17 @@ def batch_add_chord_charts(item_id, chord_charts_data):
         
         # Get highest order for this item
         item_charts = [r for r in records if item_id_str in [id.strip() for id in r.get('B', '').split(',')]]
-        max_order = max([int(float(r.get('F', -1))) for r in item_charts], default=-1)
+        
+        # Safe max_order calculation that handles empty/invalid values
+        valid_orders = []
+        for r in item_charts:
+            order_val = r.get('F', -1)
+            if order_val and str(order_val).strip():
+                try:
+                    valid_orders.append(int(float(str(order_val))))
+                except (ValueError, TypeError):
+                    continue
+        max_order = max(valid_orders, default=-1)
         
         # Create all new records
         new_records = []

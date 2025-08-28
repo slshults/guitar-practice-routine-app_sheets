@@ -16,9 +16,10 @@ import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
 import { useItemDetails } from '@hooks/useItemDetails';
 import { usePracticeItems } from '@hooks/usePracticeItems';
-import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, ChevronUp, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, X, Wand, Sparkles } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
+import ApiErrorModal from './ApiErrorModal';
 import { serverDebug, serverInfo } from '../utils/logging';
 import {
   AlertDialog,
@@ -267,7 +268,6 @@ export const PracticePage = () => {
   const [editingNoteItemId, setEditingNoteItemId] = useState(null);
   const [timers, setTimers] = useState({});
   const [expandedChords, setExpandedChords] = useState(new Set());
-  const chordChartRefs = useRef({});
   const [chordCharts, setChordCharts] = useState({});
   const [showChordEditor, setShowChordEditor] = useState({});
 
@@ -291,6 +291,17 @@ export const PracticePage = () => {
   const [showAutocreateZone, setShowAutocreateZone] = useState({});
   const [autocreateAbortController, setAutocreateAbortController] = useState({});
   const [processingMessageIndex, setProcessingMessageIndex] = useState(0);
+  
+  // Single file tracking for all uploaded files
+  const [uploadedFiles, setUploadedFiles] = useState({});
+  const [showMixedContentModal, setShowMixedContentModal] = useState(false);
+  const [mixedContentData, setMixedContentData] = useState(null);
+  const [showUnsupportedFormatModal, setShowUnsupportedFormatModal] = useState(false);
+  const [unsupportedFormatData, setUnsupportedFormatData] = useState(null);
+  
+  // API Error modal state
+  const [showApiErrorModal, setShowApiErrorModal] = useState(false);
+  const [apiError, setApiError] = useState(null);
   
   // Rotating processing messages for entertainment
   const processingMessages = [
@@ -342,6 +353,47 @@ export const PracticePage = () => {
     // Convert map to array and sort by section creation order
     const sections = Array.from(sectionMap.values());
     
+    
+    return sections;
+  };
+
+  // Helper function to build sections from charts array (used after autocreate)
+  const buildSectionsFromCharts = (charts) => {
+    if (charts.length === 0) {
+      return [];
+    }
+    
+    // Group chords by their section metadata
+    const sectionMap = new Map();
+    
+    charts.forEach(chart => {
+      const sectionId = chart.sectionId || 'section-1';
+      const sectionLabel = chart.sectionLabel || 'Verse';
+      const sectionRepeatCount = chart.sectionRepeatCount || '';
+      
+      if (!sectionMap.has(sectionId)) {
+        sectionMap.set(sectionId, {
+          id: sectionId,
+          label: sectionLabel,
+          repeatCount: sectionRepeatCount,
+          chords: []
+        });
+      }
+      
+      sectionMap.get(sectionId).chords.push(chart);
+    });
+    
+    // Convert to array and sort sections by the order of their first chord
+    const sections = Array.from(sectionMap.values()).sort((a, b) => {
+      const aMinOrder = Math.min(...a.chords.map(c => c.order || 0));
+      const bMinOrder = Math.min(...b.chords.map(c => c.order || 0));
+      return aMinOrder - bMinOrder;
+    });
+    
+    // Sort chords within each section by order
+    sections.forEach(section => {
+      section.chords.sort((a, b) => (a.order || 0) - (b.order || 0));
+    });
     
     return sections;
   };
@@ -1050,114 +1102,16 @@ export const PracticePage = () => {
     return { totalMinutes: total, completedMinutes: completed };
   }, [routine, completedItems, getItemDetails]);
 
-  // Effect to handle chord chart initialization
+  // Effect to load SVGuitar library for MemoizedChordChart components
   useEffect(() => {
     // Load SVGuitar UMD script if not already loaded
     if (!window.svguitar) {
       const script = document.createElement('script');
       script.src = 'https://omnibrain.github.io/svguitar/js/svguitar.umd.js';
       script.async = true;
-      script.onload = () => {
-        initializeCharts();
-      };
       document.body.appendChild(script);
-    } else {
-      initializeCharts();
     }
-
-    function initializeCharts() {
-      // First, clean up any charts that are no longer needed
-      Object.keys(chordChartRefs.current).forEach(refKey => {
-        const [itemId, chartId] = refKey.split('-').slice(0, 2);
-        
-        // Check if this chart should still exist
-        const shouldExist = expandedChords.has(itemId) && 
-          chordCharts[itemId]?.some(chart => chart.id === chartId);
-        
-        if (!shouldExist) {
-          // Clean up this chart
-          const container = document.getElementById(`chord-chart-${refKey}`);
-          if (container) {
-            container.innerHTML = '';
-          }
-          delete chordChartRefs.current[refKey];
-        }
-      });
-      
-      // Now initialize new charts
-      expandedChords.forEach(itemId => {
-        // Get all charts for this item
-        const itemCharts = chordCharts[itemId] || [];
-        
-        itemCharts.forEach(chartData => {
-          const refKey = `${itemId}-${chartData.id}`;
-          const container = document.getElementById(`chord-chart-${itemId}-${chartData.id}`);
-          
-          // Skip if container doesn't exist or chart already initialized
-          if (!container || chordChartRefs.current[refKey]) {
-            return;
-          }
-
-          try {
-            const chart = new window.svguitar.SVGuitarChord(`#chord-chart-${itemId}-${chartData.id}`);
-
-            chart
-              .configure({
-                strings: 6,
-                frets: 5,
-                position: chartData.position || 1,
-                tuning: chartData.tuning.split(''),
-                fretLabelPosition: 'right',
-                fretLabelFontSize: 6,
-                width: 70,
-                height: 85,
-                stringLabelFontSize: 7,
-                fretNumbersFontSize: 7,
-                stringWidth: 0.6,
-                fretWidth: 0.6,
-                strokeWidth: 0.6,
-              })
-              .chord({
-                fingers: chartData.fretPositions.map((pos, idx) => [idx + 1, pos]),
-                barres: []
-              })
-              .draw();
-
-            chordChartRefs.current[`${itemId}-${chartData.id}`] = chart;
-            
-            // Remove hardcoded width/height attributes and fix with CSS
-            const svg = container.querySelector('svg');
-            if (svg) {
-              svg.removeAttribute('width');
-              svg.removeAttribute('height');
-              svg.style.width = '100%';
-              svg.style.height = '100%';
-              svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-            }
-          } catch (error) {
-            console.error('Error initializing chord chart:', error);
-          }
-        });
-      });
-    }
-
-    // Cleanup function
-    return () => {
-      expandedChords.forEach(itemId => {
-        const itemCharts = chordCharts[itemId] || [];
-        itemCharts.forEach(chart => {
-          const refKey = `${itemId}-${chart.id}`;
-          if (chordChartRefs.current[refKey]) {
-            const container = document.getElementById(`chord-chart-${itemId}-${chart.id}`);
-            if (container) {
-              container.innerHTML = '';
-            }
-            delete chordChartRefs.current[refKey];
-          }
-        });
-      });
-    };
-  }, [expandedChords, chordCharts]);
+  }, []);
 
   const toggleChords = (itemId, e) => {
     e?.stopPropagation();
@@ -1695,7 +1649,7 @@ export const PracticePage = () => {
       autocreateAbortController[itemId].abort();
     }
     
-    // Reset state
+    // Reset all state for this item
     setAutocreateProgress(prev => {
       const newState = { ...prev };
       delete newState[itemId];
@@ -1706,8 +1660,114 @@ export const PracticePage = () => {
       delete newState[itemId];
       return newState;
     });
+    setUploadedFiles(prev => {
+      const newState = { ...prev };
+      delete newState[itemId];
+      return newState;
+    });
   };
 
+  const handleSingleFileDrop = (itemId, files) => {
+    if (!files || files.length === 0) return;
+    
+    // Validate file count
+    if (files.length > 5) {
+      alert('Maximum 5 files allowed. Please select fewer files.');
+      return;
+    }
+    
+    setUploadedFiles(prev => ({ ...prev, [itemId]: Array.from(files) }));
+  };
+  
+  const handleProcessFiles = async (itemId) => {
+    const files = uploadedFiles[itemId] || [];
+    
+    if (files.length === 0) {
+      alert('Please add at least one file before processing.');
+      return;
+    }
+    
+    await handleFileDrop(itemId, files);
+  };
+
+  const handleMixedContentChoice = async (contentType) => {
+    if (!mixedContentData) return;
+    
+    const { itemId, files } = mixedContentData;
+    
+    try {
+      setAutocreateProgress({ [itemId]: 'processing' });
+      setShowMixedContentModal(false);
+      
+      // Create FormData and add user choice
+      const formData = new FormData();
+      files.forEach((file, index) => {
+        // We need to reconstruct the file from the base64 data
+        const byteCharacters = atob(file.data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const reconstructedFile = new File([byteArray], file.name, { type: file.media_type });
+        formData.append(`file${index}`, reconstructedFile);
+      });
+      formData.append('itemId', itemId);
+      formData.append('userChoice', contentType); // Add user's choice
+      
+      const response = await fetch('/api/autocreate-chord-charts', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to process files');
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        setAutocreateProgress({ [itemId]: 'complete' });
+        
+        // Force refresh chord charts
+        try {
+          const chartsResponse = await fetch(`/api/items/${itemId}/chord-charts`);
+          if (chartsResponse.ok) {
+            const charts = await chartsResponse.json();
+            setChordCharts(prev => ({ ...prev, [itemId]: charts }));
+            
+            if (charts && charts.length > 0) {
+              const sections = buildSectionsFromCharts(charts);
+              setChordSections(prev => ({ ...prev, [itemId]: sections }));
+            }
+          }
+        } catch (error) {
+          console.error('Failed to refresh chord charts after mixed content choice:', error);
+        }
+        
+        // Clear state after delay
+        setTimeout(() => {
+          setAutocreateProgress(prev => {
+            const newState = { ...prev };
+            delete newState[itemId];
+            return newState;
+          });
+          setUploadedFiles(prev => {
+            const newState = { ...prev };
+            delete newState[itemId];
+            return newState;
+          });
+          setMixedContentData(null);
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Error processing mixed content choice:', error);
+      setAutocreateProgress({ [itemId]: 'error' });
+      setMixedContentData(null);
+    }
+  };
+  
   const handleFileDrop = async (itemId, files) => {
     if (!files || files.length === 0) return;
     
@@ -1731,7 +1791,6 @@ export const PracticePage = () => {
       formData.append('itemId', itemId);
       
       // Show uploading for minimum 2 seconds, then switch to processing
-      const startTime = Date.now();
       const minDisplayTime = 2000;
       
       setTimeout(() => {
@@ -1750,6 +1809,37 @@ export const PracticePage = () => {
       }
       
       const result = await response.json();
+      
+      // Check if user needs to choose between mixed content types
+      if (result.needs_user_choice) {
+        setMixedContentData({
+          itemId: itemId,
+          options: result.mixed_content_options || [],
+          files: result.files || []
+        });
+        setShowMixedContentModal(true);
+        setAutocreateProgress(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+        return;
+      }
+
+      // Check for unsupported file formats
+      if (result.error === 'unsupported_format') {
+        setUnsupportedFormatData({
+          message: result.message,
+          title: result.title
+        });
+        setShowUnsupportedFormatModal(true);
+        setAutocreateProgress(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
+        return;
+      }
       
       setAutocreateProgress({ [itemId]: 'complete' });
       
@@ -1827,6 +1917,11 @@ export const PracticePage = () => {
           delete newState[itemId];
           return newState;
         });
+        setUploadedFiles(prev => {
+          const newState = { ...prev };
+          delete newState[itemId];
+          return newState;
+        });
       }, 5000);
       
     } catch (error) {
@@ -1836,11 +1931,29 @@ export const PracticePage = () => {
       }
       
       console.error('Error in autocreate:', error);
-      setAutocreateProgress({ [itemId]: 'error' });
       
-      // Clear error state after delay
-      setTimeout(() => {
-        setAutocreateProgress(prev => {
+      // Check if this is an API error that needs special handling
+      const errorMsg = error.message || error.toString();
+      if (errorMsg.includes('529') || errorMsg.includes('overloaded') || 
+          errorMsg.includes('429') || errorMsg.includes('rate limit') ||
+          errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') ||
+          errorMsg.includes('timeout')) {
+        // Show API error modal for these specific errors
+        setApiError(error);
+        setShowApiErrorModal(true);
+        setAutocreateProgress({ [itemId]: 'idle' }); // Reset to idle state
+      } else {
+        // Generic error handling for other errors
+        setAutocreateProgress({ [itemId]: 'error' });
+      }
+      
+      // Clear error state after delay (only for generic errors)
+      if (!(errorMsg.includes('529') || errorMsg.includes('overloaded') || 
+            errorMsg.includes('429') || errorMsg.includes('rate limit') ||
+            errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') ||
+            errorMsg.includes('timeout'))) {
+        setTimeout(() => {
+          setAutocreateProgress(prev => {
           const newState = { ...prev };
           delete newState[itemId];
           return newState;
@@ -1851,26 +1964,10 @@ export const PracticePage = () => {
           return newState;
         });
       }, 5000);
+      }
     }
   };
 
-  const handleDragOver = (e, itemId) => {
-    e.preventDefault();
-    setIsDragActive(prev => ({ ...prev, [itemId]: true }));
-  };
-
-  const handleDragLeave = (e, itemId) => {
-    e.preventDefault();
-    setIsDragActive(prev => ({ ...prev, [itemId]: false }));
-  };
-
-  const handleDrop = (e, itemId) => {
-    e.preventDefault();
-    setIsDragActive(prev => ({ ...prev, [itemId]: false }));
-    
-    const files = e.dataTransfer.files;
-    handleFileDrop(itemId, files);
-  };
 
   const toggleChordEditor = (itemId, e) => {
     e?.stopPropagation();
@@ -2168,7 +2265,6 @@ export const PracticePage = () => {
                               {(() => {
                                 const existingCharts = chordCharts[itemReferenceId] || [];
                                 const progress = autocreateProgress[itemReferenceId];
-                                const dragActive = isDragActive[itemReferenceId];
                                 const zoneExpanded = showAutocreateZone[itemReferenceId];
                                 
                                 if (existingCharts.length === 0) {
@@ -2189,34 +2285,90 @@ export const PracticePage = () => {
                                       
                                       {zoneExpanded && (
                                         <div className="border border-green-600/30 rounded-lg p-4 bg-green-900/10">
-                                          <p className="text-sm text-gray-400 mb-4">
-                                            Upload an image or PDF with the chord names in labeled sections (Intro, Verse, Chorus, Bridge, etc.), e.g. a lyrics sheet with the guitar chord names above the lyrics. Include the tuning, and capo placement (if any).
-                                            <br /><br />
-                                            For non-standard tunings and/or custom fingerings, also upload an image or PDF showing examples of the chord charts you want added.
+                                          <p className="text-sm text-gray-400 mb-6">
+                                            To autocreate chord charts for songs in standard tuning: Upload a file showing lyrics with chord names above the lyrics, or a PDF or image showing the chord names written out by song section.
+
+To import chord charts (standard and alternate tunings): Upload a file showing your chord charts, and we'll rebuild them for you here.
                                           </p>
                                           
+                                          {/* Single drop zone for all files */}
                                           <div
-                                            className={`w-full p-6 border-2 border-dashed rounded-lg transition-colors ${
-                                              progress ? 'cursor-default' : 'cursor-pointer'
-                                            } ${
-                                              dragActive 
-                                                ? 'border-blue-400 bg-blue-900/20' 
-                                                : progress 
-                                                  ? 'border-gray-700 bg-gray-800/50' 
-                                                  : 'border-gray-600 hover:border-gray-500'
+                                            className={`w-full p-6 border-2 border-dashed rounded-lg transition-colors cursor-pointer mb-6 ${
+                                              isDragActive[itemReferenceId]
+                                                ? 'border-blue-400 bg-blue-900/20'
+                                                : 'border-blue-600 hover:border-blue-500 bg-blue-900/10'
                                             }`}
-                                            onDragOver={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDragOver(e, itemReferenceId) : undefined}
-                                            onDragLeave={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDragLeave(e, itemReferenceId) : undefined}
-                                            onDrop={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? (e) => handleDrop(e, itemReferenceId) : undefined}
-                                            onClick={!progress && !(chordCharts[itemReferenceId] && chordCharts[itemReferenceId].length > 0) ? () => {
-                                              // Trigger file input
+                                            onDragOver={(e) => {
+                                              e.preventDefault();
+                                              setIsDragActive(prev => ({ ...prev, [itemReferenceId]: true }));
+                                            }}
+                                            onDragLeave={(e) => {
+                                              e.preventDefault();
+                                              setIsDragActive(prev => ({ ...prev, [itemReferenceId]: false }));
+                                            }}
+                                            onDrop={(e) => {
+                                              e.preventDefault();
+                                              setIsDragActive(prev => ({ ...prev, [itemReferenceId]: false }));
+                                              handleSingleFileDrop(itemReferenceId, e.dataTransfer.files);
+                                            }}
+                                            onClick={() => {
                                               const input = document.createElement('input');
                                               input.type = 'file';
                                               input.multiple = true;
                                               input.accept = '.pdf,.png,.jpg,.jpeg';
-                                              input.onchange = (e) => handleFileDrop(itemReferenceId, e.target.files);
+                                              input.onchange = (e) => handleSingleFileDrop(itemReferenceId, e.target.files);
                                               input.click();
-                                            } : undefined}
+                                            }}
+                                          >
+                                            <div className="text-center">
+                                              <Upload className={`h-16 w-16 mx-auto mb-2 ${
+                                                uploadedFiles[itemReferenceId] && uploadedFiles[itemReferenceId].length > 0 ? 'text-blue-400' : 'text-gray-400'
+                                              }`} />
+                                              <p className={`text-lg font-medium mb-2 ${
+                                                uploadedFiles[itemReferenceId] && uploadedFiles[itemReferenceId].length > 0 ? 'text-blue-300' : 'text-gray-300'
+                                              }`}>Drop files here or click to browse</p>
+                                              <p className="text-gray-400 text-sm mb-4">
+                                                PDFs, images (PNG, JPG) • Max 5 files
+                                              </p>
+                                              {uploadedFiles[itemReferenceId] && uploadedFiles[itemReferenceId].length > 0 ? (
+                                                <div>
+                                                  <p className="text-blue-400 text-sm font-medium mb-2">
+                                                    {uploadedFiles[itemReferenceId].length} file(s) selected:
+                                                  </p>
+                                                  <div className="text-xs text-gray-400 space-y-1">
+                                                    {uploadedFiles[itemReferenceId].map((file, index) => (
+                                                      <div key={index}>{file.name}</div>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              ) : (
+                                                <p className="text-gray-400 text-xs">
+                                                  Lyrics with chords (standard tuning only) • Chord charts
+                                                </p>
+                                              )}
+                                            </div>
+                                          </div>
+                                          
+                                          {/* Process Button */}
+                                          <div className="flex justify-center">
+                                            <Button
+                                              variant="outline"
+                                              onClick={() => handleProcessFiles(itemReferenceId)}
+                                              disabled={progress || (uploadedFiles[itemReferenceId] || []).length === 0}
+                                              className={`px-6 ${
+                                                progress || (uploadedFiles[itemReferenceId] || []).length === 0
+                                                  ? 'border-gray-600 text-gray-500 cursor-not-allowed'
+                                                  : 'border-blue-600 text-blue-300 hover:bg-blue-800'
+                                              }`}
+                                            >
+                                              <Wand className="h-4 w-4 mr-2" />
+                                              Create Chord Charts
+                                            </Button>
+                                          </div>
+                                          
+                                          {/* Progress/Status Display */}
+                                          <div
+                                            className="w-full p-6 border-2 border-dashed rounded-lg mt-4 bg-gray-800/50 border-gray-600"
                                           >
                                             <div className="text-center">
                                               {progress === 'uploading' && (
@@ -2280,11 +2432,30 @@ export const PracticePage = () => {
                                                     </>
                                                   ) : (
                                                     <>
-                                                      <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                                                      <p className="text-gray-300 font-medium mb-1">Drop files here or click to browse</p>
-                                                      <p className="text-gray-500 text-sm">
-                                                        5 files max, 10MB each • Supports PDF, PNG, JPG
-                                                      </p>
+                                                      {(() => {
+                                                        const hasFiles = (uploadedFiles[itemReferenceId] || []).length > 0;
+                                                        
+                                                        if (hasFiles) {
+                                                          return (
+                                                            <>
+                                                              <Sparkles className="h-8 w-8 text-blue-400 mx-auto mb-2" />
+                                                              <p className="text-blue-300 font-medium mb-1">Ready to create chord charts</p>
+                                                              <p className="text-gray-400 text-sm">
+                                                                Add more files, or click 'Create chord charts'
+                                                              </p>
+                                                            </>
+                                                          );
+                                                        } else {
+                                                          return (
+                                                            <>
+                                                              <Sparkles className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                                                              <p className="text-gray-300 font-medium mb-1">Add files above, then click 'Create Chord Charts'</p>
+                                                              
+                                                              <p className="text-gray-400 text-xs mt-2">(The results will probably contain errors, use the ✏️edit icon to make any corrections needed.)</p>
+                                                            </>
+                                                          );
+                                                        }
+                                                      })()}
                                                     </>
                                                   )}
                                                 </>
@@ -2562,6 +2733,68 @@ export const PracticePage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Mixed Content Choice Modal */}
+      <AlertDialog open={showMixedContentModal} onOpenChange={setShowMixedContentModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2">
+              <AlertTriangle className="h-5 w-5 text-blue-500" />
+              <span>Mixed Content Detected</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Your file contains both chord names and chord charts. How would you like to process it?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowMixedContentModal(false);
+              setMixedContentData(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => handleMixedContentChoice('chord_names')}>
+              Process Chord Names
+            </AlertDialogAction>
+            <AlertDialogAction onClick={() => handleMixedContentChoice('chord_charts')}>
+              Import Chord Charts
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unsupported Format Modal */}
+      <AlertDialog open={showUnsupportedFormatModal} onOpenChange={setShowUnsupportedFormatModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <span>{unsupportedFormatData?.title || 'Format Not Supported'}</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {unsupportedFormatData?.message || 'Sorry, we can only build chord charts. This file format is not supported.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => {
+              setShowUnsupportedFormatModal(false);
+              setUnsupportedFormatData(null);
+            }}>
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* API Error Modal */}
+      <ApiErrorModal 
+        isOpen={showApiErrorModal}
+        onClose={() => {
+          setShowApiErrorModal(false);
+          setApiError(null);
+        }}
+        error={apiError}
+      />
     </div>
   );
 }; 

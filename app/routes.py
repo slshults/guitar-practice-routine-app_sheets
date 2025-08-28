@@ -1581,16 +1581,18 @@ def autocreate_chord_charts():
             
         app.logger.debug(f"Processing files for item ID: {item_id}")
         
-        # Process uploaded files
-        file_contents = []
-        for key, file in request.files.items():
+        # Process uploaded files - simplified single collection
+        uploaded_files = []
+        
+        def process_file(file):
+            """Helper function to process a single file"""
             if file.filename == '':
-                continue
+                return None
                 
             # Validate file type and size
             filename = secure_filename(file.filename)
             if not filename:
-                continue
+                return None
                 
             # Check file size (10MB limit)
             file.seek(0, os.SEEK_END)
@@ -1598,7 +1600,7 @@ def autocreate_chord_charts():
             file.seek(0)
             
             if file_size > 10 * 1024 * 1024:  # 10MB
-                return jsonify({'error': f'File {filename} is too large (max 10MB)'}), 400
+                return {'error': f'File {filename} is too large (max 10MB)'}
                 
             # Read file content
             file_data = file.read()
@@ -1608,24 +1610,50 @@ def autocreate_chord_charts():
             
             if file_ext == 'pdf':
                 # For PDFs, we'll send the raw bytes and let Claude handle it
-                file_contents.append({
+                return {
                     'name': filename,
                     'type': 'pdf',
                     'data': base64.b64encode(file_data).decode('utf-8')
-                })
+                }
             elif file_ext in ['png', 'jpg', 'jpeg']:
                 # For images, encode as base64
-                file_contents.append({
+                return {
                     'name': filename,
                     'type': 'image',
                     'data': base64.b64encode(file_data).decode('utf-8'),
                     'media_type': f'image/{file_ext if file_ext != "jpg" else "jpeg"}'
-                })
+                }
             else:
-                return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
+                return {'error': f'Unsupported file type: {file_ext}'}
+        
+        # Process single uploaded file only (simplified approach)
+        files_list = list(request.files.values())
+        if len(files_list) > 1:
+            return jsonify({'error': 'Please upload only one file at a time for autocreate'}), 400
+        
+        if len(files_list) == 0:
+            return jsonify({'error': 'No file uploaded'}), 400
+            
+        # Process the single file
+        file = files_list[0]
+        result = process_file(file)
+        if result:
+            if 'error' in result:
+                return jsonify(result), 400
+            uploaded_files.append(result)
+        
+        app.logger.info(f"Processed 1 file for analysis: {result.get('name', 'unknown')}")
                 
-        if not file_contents:
-            return jsonify({'error': 'No valid files found'}), 400
+        if not uploaded_files:
+            return jsonify({'error': 'No valid file found'}), 400
+            
+        # Check if user provided a choice for mixed content
+        user_choice = request.form.get('userChoice')
+        if user_choice:
+            app.logger.info(f"User chose to process files as: {user_choice}")
+            # Override file type detection with user choice
+            for file_data in uploaded_files:
+                file_data['forced_type'] = user_choice
             
         # Get Anthropic API key from environment
         api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -1639,7 +1667,7 @@ def autocreate_chord_charts():
         app.logger.debug("Sending files to Claude for analysis")
         
         # Create the analysis prompt
-        analysis_result = analyze_files_with_claude(client, file_contents, item_id)
+        analysis_result = analyze_files_with_claude(client, uploaded_files, item_id)
         
         app.logger.debug("Claude analysis complete, creating chord charts")
         
@@ -1649,65 +1677,211 @@ def autocreate_chord_charts():
         app.logger.error(f"Error in autocreate chord charts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-def analyze_files_with_claude(client, file_contents, item_id):
-    """Analyze uploaded files with Claude and create chord charts"""
+def analyze_reference_diagrams_only(client, reference_files):
+    """Step 1: Pure visual analysis of chord diagrams with focused prompt"""
     try:
-        # Create message content with files
+        # Create focused visual analysis prompt for chord diagrams
         message_content = [
             {
-                "type": "text",
-                "text": """I need you to analyze these chord chart files and extract the chord information to create a structured response for a guitar practice app.
+                "type": "text", 
+                "text": f"""🎸 **CHORD DIAGRAM VISUAL ANALYSIS WITH LAYOUT STRUCTURE**
 
-Please extract:
-1. Song metadata (tuning, capo position if any)
-2. ALL song sections - look carefully for Intro, Verse, Chorus, Bridge, Solo, Outro, Instrumental, etc. Include repeat indicators if shown
-3. Chord names for each section (we have a database of common chords, so just the chord names are needed)
+You are analyzing {len(reference_files)} reference chord diagram files.
 
-IMPORTANT: Look through the ENTIRE document to find ALL sections. Many songs have Solo and Outro sections that appear later in the document.
+**FUNDAMENTAL RULE**: If the file contains chord charts, that's the user's way of asking you to use exactly the chord chart fingerings/shapes and chord chart names seen in the reference image. DO NOT substitute standard tuning patterns - use only what you actually see in the chord charts in the uploaded file.
 
-Return your response as a JSON object with this structure:
-{
-  "tuning": "EADGBE",
-  "capo": 0,
-  "sections": [
-    {
-      "label": "Intro",
-      "repeatCount": "",
-      "chords": [{"name": "Em"}, {"name": "Am"}, {"name": "C"}, {"name": "G"}]
-    },
-    {
-      "label": "Verse", 
-      "repeatCount": "x2",
-      "chords": [{"name": "Em"}, {"name": "Am"}]
-    },
-    {
-      "label": "Chorus",
-      "repeatCount": "x2", 
-      "chords": [{"name": "C"}, {"name": "G"}, {"name": "D"}]
-    },
-    {
-      "label": "Solo",
-      "repeatCount": "",
-      "chords": [{"name": "Em"}, {"name": "C"}, {"name": "G"}, {"name": "D"}]
-    },
-    {
-      "label": "Outro", 
-      "repeatCount": "",
-      "chords": [{"name": "Em"}]
-    }
-  ]
-}
+**OVERRIDE INSTRUCTION**: If the uploaded file contains only Chord Charts (no lyrics), then even if you recognize these as "standard" chord names like E, A, G, etc., you MUST read the actual marker positions shown in THIS specific diagram. These may not be standard tuning - read only what you see, not what you expect these chords to look like.
 
-Focus on extracting chord NAMES only - we will look up the fingerings from our chord database. Make sure to find ALL sections in the document, especially Solo and Outro sections which often appear at the end.
+**TASK:**
+- Find all chord diagrams in the file
+- Extract fret positions from markers in chord charts shown
+- Preserve chord charts, order, and any section groupings
 
-Analyze the files and provide the structured chord data:"""
+**⚠️ ANTI-KNOWLEDGE WARNING:** Please DO NOT use your knowledge of what guitar chords "should" look like. ONLY extract what you visually observe in the diagrams. If you see a marker at fret 3, extract fret 3 - even if you think that chord "should" be at fret 2.
+
+**PATTERN EXTRACTION RULES - CRITICAL VISUAL ANALYSIS:**
+
+1. **Fret Counting Rules (CRITICAL):**
+   - The TOP horizontal line is the "nut" (fret 0)
+   - **Fret 1** = The space BETWEEN the nut (top line) and the 2nd horizontal line
+   - **Fret 2** = The space BETWEEN the 2nd and 3rd horizontal lines
+   - **Fret 3** = The space BETWEEN the 3rd and 4th horizontal lines
+   - Count spaces, NOT lines!
+
+2. **String Order (CRITICAL):**
+   - String 6 = Leftmost vertical line (lowest pitch)
+   - String 5 = Second from left
+   - String 4 = Third from left  
+   - String 3 = Fourth from left
+   - String 2 = Second from right
+   - String 1 = Rightmost vertical line (highest pitch)
+
+3. **Marker Types:**
+   - Dots, circles, numbered circles (1,2,3,4), lettered circles (T) = finger positions (NOTE: Numbers inside of circles denote which finger is to be used. Do not confuse numbers in the image for marker positions.)
+   - "O" above nut = open string (fret 0)
+   - "X" above nut = muted string (fret -1)
+
+4. **IGNORE COMPLETELY:**
+   - Position markers like "3fr", "5fr", "7fr" - these are irrelevant for now.
+   - Any chord knowledge you have - extract only what you see instead. We want to copy it exactly.
+   - Chord name expectations - read diagrams, not labels
+
+5. **STEP-BY-STEP PROCESS:**
+   For EACH chord diagram:
+   - **Identify the chord name** from the label above the diagram
+   - **Examine each string (left to right, strings 6 through 1):**
+     - Look above the nut: O = open (0), X = muted (-1)
+     - Look for markers: count which fret space they occupy
+     - If no marker and no O/X, assume open (0)
+   - **Double-check your work:** Re-examine the diagram and verify each position
+   - **Create detailed description:** Describe exactly what you see
+
+**LAYOUT STRUCTURE RULES**:
+1. Match the layout of chords exactly as seen in the uploaded file
+2. **Section Preservation**: When you see sections labeled `Intro`, `Verse 1`, `Chorus`, `Solo`, `Bridge`, `Outro`, etc, replicate those sections, and fill with the same chords seen in the uploaded chord chart file
+3. **Line Breaks Within Sections**: Mark where new rows begin, match the uploaded file
+
+
+
+**OUTPUT FORMAT**: JSON with layout structure and detailed visual descriptions:
+```json
+{{
+  "chords": [
+    {{ 
+      "name": "Eadd9", 
+      "pattern": [0, 2, 1, 0, 0, 0], 
+      "row": 1, 
+      "position": 1,
+      "visualDescription": "DEBUG: String 6 (leftmost): O above nut (open, fret 0), String 5: numbered circle '2' in fret space 2 (fret 2), String 4: numbered circle '1' in fret space 1 (fret 1), String 3: O above nut (open, fret 0), String 2: O above nut (open, fret 0), String 1: O above nut (open, fret 0). Final pattern: [0,2,1,0,0,0]"
+    }},
+    {{ 
+      "name": "E6sus", 
+      "pattern": [0, 2, 4, 4, 0, 0], 
+      "row": 1, 
+      "position": 2,
+      "visualDescription": "DEBUG: String 6 (leftmost): O above nut (open, fret 0), String 5: numbered circle '2' in fret space 2 (fret 2), String 4: numbered circle '4' in fret space 4 (fret 4), String 3: numbered circle '4' in fret space 4 (fret 4), String 2: O above nut (open, fret 0), String 1: O above nut (open, fret 0). Final pattern: [0,2,4,4,0,0]"
+    }}
+  ],
+  "totalRows": 3
+}}
+```
+
+"""
             }
         ]
         
-        # Add files to message
-        for file_content in file_contents:
+        # Add reference chord files (process both images and PDFs)
+        for ref_file in reference_files:
+            if ref_file.get('type') == 'image':
+                message_content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": ref_file['media_type'],
+                        "data": ref_file['data']
+                    }
+                })
+            elif ref_file.get('type') == 'pdf':
+                message_content.append({
+                    "type": "document", 
+                    "source": {
+                        "type": "base64",
+                        "media_type": ref_file['media_type'],
+                        "data": ref_file['data']
+                    }
+                })
+            else:
+                # Log unsupported file types but continue processing
+                print(f"INFO: Unsupported reference file type for '{ref_file.get('name')}', skipping")
+        
+        # Use Opus for superior visual analysis
+        response = client.messages.create(
+            model="claude-opus-4-1-20250805",
+            max_tokens=4000,
+            messages=[{
+                "role": "user",
+                "content": message_content
+            }]
+        )
+        
+        return response.content[0].text
+        
+    except Exception as e:
+        raise Exception(f"Visual analysis failed: {str(e)}")
+
+def detect_file_types_with_sonnet(client, uploaded_files):
+    """Detect file types using Sonnet 4 model"""
+    try:
+        app.logger.info("Using Sonnet 4 to detect file types and content")
+        
+        # Build message content with files for analysis
+        prompt_text = """🎸 **FILE TYPE DETECTION FOR GUITAR CONTENT**
+
+Analyze the uploaded files and determine their content types. You need to categorize each file as either:
+
+1. **"chord_charts"** - Files containing visual chord diagrams that can be imported directly
+   - Hand-drawn chord charts
+   - Printed chord reference sheets  
+   - Digital chord diagrams
+   - Any files showing finger positions on fretboards
+
+2. **"chord_names"** - Files with chord symbols above lyrics for CommonChords lookup
+   - Lyrics with chord names above them (G, C, Am, etc.)
+   - Song sheets with chord symbols
+   - Lead sheets with chord progressions over text
+
+3. **"tablature"** - Files containing actual guitar tablature notation
+   - Text-based tablature with fret numbers on horizontal string lines (e.g. E|--0--3--0--|)
+   - Tab files showing fingering patterns with numbers indicating frets
+   
+4. **"sheet_music"** - Files containing standard music notation
+   - Traditional music notation with notes on staff lines
+   - PDF files with musical scores and notation
+
+**RESPONSE FORMAT:**
+Return JSON with this exact structure:
+```json
+{
+  "primary_type": "chord_charts",
+  "has_mixed_content": false,
+  "content_types": ["chord_charts"],
+  "analysis": {
+    "file_breakdown": [
+      {
+        "filename": "example.pdf",
+        "type": "chord_charts",
+        "confidence": "high",
+        "reason": "Contains visual chord diagrams with finger positions"
+      }
+    ]
+  }
+}
+```
+
+**RULES:**
+- Set "has_mixed_content": true only if files contain BOTH chord charts AND lyrics
+- "primary_type" should be the most common content type found
+- Use "high", "medium", or "low" for confidence levels
+- Provide clear reasoning for each file classification
+
+Analyze the files below:"""
+
+        message_content = [{
+            "type": "text",
+            "text": prompt_text
+        }]
+
+        # Add all files for analysis
+        for file_content in uploaded_files:
+            name = file_content['name']
+            
+            # Add file label
+            message_content.append({
+                "type": "text",
+                "text": f"\n\n**FILE: {name}**"
+            })
+            
             if file_content['type'] == 'pdf':
-                # For PDFs, use document format
                 message_content.append({
                     "type": "document",
                     "source": {
@@ -1717,7 +1891,6 @@ Analyze the files and provide the structured chord data:"""
                     }
                 })
             elif file_content['type'] == 'image':
-                # For images, use image format
                 message_content.append({
                     "type": "image",
                     "source": {
@@ -1726,66 +1899,94 @@ Analyze the files and provide the structured chord data:"""
                         "data": file_content['data']
                     }
                 })
+
+        # Use Sonnet 4 for file type detection
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3000,
+            messages=[{
+                "role": "user",
+                "content": message_content
+            }]
+        )
         
-        # Call Claude API with proper timeout
-        # The anthropic client has built-in timeout support
-        try:
-            # Get API key
-            api_key = os.getenv('ANTHROPIC_API_KEY')
-            if not api_key:
-                raise ValueError("Anthropic API key not configured")
-                
-            # Create client with timeout
-            client_with_timeout = anthropic.Anthropic(
-                api_key=api_key,
-                timeout=120.0  # 2 minute timeout
-            )
-            
-            message = client_with_timeout.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=4000,
-                messages=[{
-                    "role": "user",
-                    "content": message_content
-                }]
-            )
-        except anthropic.APITimeoutError:
-            raise TimeoutError("Claude API request timed out")
+        response_text = response.content[0].text
         
-        # Parse Claude's response
-        response_text = message.content[0].text
-        
-        # Try to extract JSON from the response
-        try:
-            # Find JSON in the response (Claude might wrap it in markdown)
-            import re
-            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+        # Parse JSON response
+        import re
+        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find JSON without markdown wrapper
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
-                json_str = json_match.group(1)
+                json_str = json_match.group(0)
             else:
-                # Try to find JSON without markdown wrapper
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    raise ValueError("No valid JSON found in Claude's response")
-                    
-            chord_data = json.loads(json_str)
-            
-        except (json.JSONDecodeError, ValueError) as e:
-            app.logger.error(f"Failed to parse Claude's response as JSON: {e}")
-            app.logger.error(f"Claude response was: {response_text}")
-            return {'error': f'Failed to parse chord data from analysis. Claude responded with: {response_text[:500]}...'}
+                # Fallback to chord_names if no JSON found
+                app.logger.warning("Could not parse file type detection response, defaulting to chord_names")
+                return {
+                    "primary_type": "chord_names",
+                    "has_mixed_content": True,
+                    "content_types": ["chord_names."],
+                    "analysis": {"error": "Could not parse detection response"}
+                }
         
-        # Create chord charts from the structured data
-        created_charts = create_chord_charts_from_data(chord_data, item_id)
+        result = json.loads(json_str)
+        app.logger.info(f"File type detection result: {result.get('primary_type', 'unknown')} (mixed: {result.get('has_mixed_content', True)})")
+        return result
         
+    except Exception as e:
+        app.logger.error(f"File type detection failed: {str(e)}")
+        # Default to chord_names processing on error
         return {
-            'success': True,
-            'message': f'Created {len(created_charts)} chord charts',
-            'charts': created_charts,
-            'analysis': chord_data
+            "primary_type": "chord_names", 
+            "has_mixed_content": True,
+            "content_types": ["tablature"],
+            "analysis": {"error": str(e)}
         }
+
+def analyze_files_with_claude(client, uploaded_files, item_id):
+    """Simplified analysis: detect file type and process accordingly"""
+    try:
+        # Step 1: File type detection using Sonnet 4
+        app.logger.info(f"Step 1: Analyzing {len(uploaded_files)} files to detect content type using Sonnet 4")
+        file_type_result = detect_file_types_with_sonnet(client, uploaded_files)
+        
+        # Step 2: Process based on detected content type
+        if file_type_result.get('has_mixed_content'):
+            # TODO: Return data for mixed content modal (Steven's requirement #2)
+            return {
+                'needs_user_choice': True,
+                'mixed_content_options': file_type_result.get('content_types', []),
+                'files': uploaded_files
+            }
+        
+        # Process based on primary content type
+        primary_type = file_type_result.get('primary_type', 'chord_names')
+        app.logger.info(f"Processing files as: {primary_type}")
+        
+        # Step 3: Process files based on detected type
+        if primary_type == 'chord_charts':
+            return process_chord_charts_directly(client, uploaded_files, item_id)
+        elif primary_type == 'chord_names':
+            return process_chord_names_with_lyrics(client, uploaded_files, item_id)
+        elif primary_type == 'tablature':
+            return {
+                'error': 'unsupported_format',
+                'message': 'Sorry, we can only build chord charts. We can\'t process tablature here.',
+                'title': 'Tablature Not Supported'
+            }
+        elif primary_type == 'sheet_music':
+            return {
+                'error': 'unsupported_format', 
+                'message': 'Sorry, we can only build chord charts. We can\'t process sheet music here.',
+                'title': 'Sheet Music Not Supported'
+            }
+        else:
+            # Fallback to chord names processing (most common case)
+            app.logger.warning(f"Unknown primary_type '{primary_type}', falling back to chord names processing")
+            return process_chord_names_with_lyrics(client, uploaded_files, item_id)
         
     except TimeoutError as e:
         app.logger.error(f"Claude API timeout: {str(e)}")
@@ -1795,11 +1996,366 @@ Analyze the files and provide the structured chord data:"""
         # Check if it's an API error with more specific message
         error_msg = str(e)
         if 'rate_limit' in error_msg.lower() or '429' in error_msg:
-            return {'error': 'API rate limit reached. Please wait a moment and try again.'}
+            return {'error': 'Error code: 429 - API rate limit reached. Please wait a moment and try again.'}
+        elif 'overloaded' in error_msg.lower() or '529' in error_msg:
+            return {'error': 'Error code: 529 - API servers are temporarily overloaded. Please try again in a moment.'}
+        elif '500' in error_msg or 'internal server error' in error_msg.lower():
+            return {'error': 'Error code: 500 - Server error occurred. Please try again shortly.'}
+        elif '502' in error_msg or 'bad gateway' in error_msg.lower():
+            return {'error': 'Error code: 502 - Service temporarily unavailable. Please try again.'}
+        elif '503' in error_msg or 'service unavailable' in error_msg.lower():
+            return {'error': 'Error code: 503 - Service temporarily unavailable. Please try again.'}
         elif 'timeout' in error_msg.lower():
             return {'error': 'Request timed out. Please try with fewer or smaller files.'}
         else:
             return {'error': f'Analysis failed: {str(e)}'}
+
+def process_chord_charts_directly(client, uploaded_files, item_id):
+    """Process files containing chord charts for direct import"""
+    try:
+        app.logger.info("Processing chord chart files for direct import")
+        
+        prompt_text = """🎸 **Hey Claude! Visual Chord Diagram Analysis**
+
+Hey there! I need your help with something really important. I'm asking you to look at guitar chord diagrams and extract the exact finger positions you see. This is tricky because I need you to be like a perfect camera - just tell me what's there, don't "correct" anything based on what you think it should be.
+
+**🚨 REALLY IMPORTANT:** Here's the thing - please don't use any of your guitar knowledge here. I know you know what an "Em9" or "C7/G" chord typically looks like, but I need you to completely ignore that knowledge. Think of yourself as someone who's never seen a guitar chord before - you're just looking at dots and lines and telling me where the dots are positioned.
+
+Why? Because people create their own chord variations and fingerings, and we want to capture THEIR version, not the "standard" version you might know.
+
+**Here's how to read these diagrams:**
+
+**Fret Counting** (this trips people up a lot):
+- That thick line at the top? That's the "nut" - call it fret 0
+- **Fret 1** is the space between the nut and the next horizontal line down
+- **Fret 2** is the space between the 2nd and 3rd horizontal lines  
+- **Fret 3** is the space between the 3rd and 4th horizontal lines
+- You're counting the *spaces between lines*, not the lines themselves!
+
+**String Order** (left to right):
+- String 6 = Leftmost vertical line (lowest pitch)
+- String 5 = Second from left
+- String 4 = Third from left  
+- String 3 = Fourth from left
+- String 2 = Second from right
+- String 1 = Rightmost vertical line (highest pitch)
+
+**What the symbols mean:**
+- Dots, circles, numbers (1,2,3,4), even letters like "T" = finger goes here
+- "O" above the nut = play this string open (fret 0)
+- "X" above the nut = don't play this string (muted, fret -1)
+
+**Please ignore these completely:**
+- Any "3fr", "5fr" position markers - those are just reference, not part of the pattern
+- What you think the chord "should" be - just tell me what you see!
+
+**CRITICAL: Layout and Structure Rules:**
+- Read left-to-right, top-to-bottom - exactly as they appear in the file
+- Identify line breaks - when chord diagrams start a new row
+- Use EXACT chord names from diagrams, remove capo suffixes like "(capoOn2)"
+- Group chords that appear on the same horizontal level
+- Preserve the exact order - number chords 1, 2, 3... in reading order
+
+**Your process for each chord:**
+1. Spot the chord name (Em9, C7/G, etc.)
+2. Go string by string from left to right (strings 6-1)
+3. For each string: check above the nut first (O or X?), then look for any dots/markers in the fret spaces
+4. Tell me exactly what you see in detail - this helps me debug if something goes wrong
+5. Double-check your work before moving on
+
+**Example 1:** If you see a chord with:
+- String 6: "O" above nut
+- String 5: dot in the space between 2nd and 3rd horizontal lines  
+- String 4: dot in the space between 3rd and 4th horizontal lines
+- String 3: "O" above nut
+- String 2: "O" above nut  
+- String 1: "O" above nut
+
+You'd report: [0, 2, 3, 0, 0, 0] and describe it like: "String 6 open, string 5 has dot in fret 2, string 4 has dot in fret 3, strings 3-1 are open"
+
+**Example 2:** If you see:
+- String 6: "X" above nut
+- String 5: dot in first fret space (between nut and 2nd line)
+- Strings 4,3,2,1: "O" above nut
+
+You'd report: [-1, 1, 0, 0, 0, 0] and describe: "String 6 muted, string 5 dot at fret 1, strings 4-1 open"
+
+Make sense? You're being my eyes here, and I really appreciate the help!
+
+**OUTPUT FORMAT:**
+```json
+{
+  "tuning": "DETECT_FROM_FILE",
+  "capo": 0,
+  "analysis": {
+    "referenceChordDescriptions": [
+      {
+        "name": "Em9",
+        "visualDescription": "DEBUG: String 6: O (open, fret 0), String 5: O (open, fret 0), String 4: O (open, fret 0), String 3: numbered circle '1' in fret space 2 (fret 2), String 2: numbered circle '4' in fret space 4 (fret 4), String 1: O (open, fret 0). Final pattern: [0,0,0,2,4,0]",
+        "extractedPattern": [0, 0, 0, 2, 4, 0]
+      }
+    ]
+  },
+  "sections": [
+    {
+      "label": "Main",
+      "chords": [
+        {
+          "name": "Em9",
+          "frets": [0, 0, 0, 2, 4, 0],
+          "sourceType": "chord_chart_direct",
+          "lineBreakAfter": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+**A couple more things that really help me out:**
+- Please include that detailed visualDescription for each chord - it's like showing your work in math class, and it helps me figure out if something went wrong
+- If you see something confusing or contradictory, just tell me about it - I'd rather know you're uncertain than guess wrong
+- Remember the frets array goes [string 6, string 5, string 4, string 3, string 2, string 1] (low to high pitch)
+- Use -1 for muted (X), 0 for open (O), and 1, 2, 3, etc. for fretted positions
+
+Thanks so much for being thorough with this, you rock Claude! 🤘🎸🚀"""
+
+        message_content = [{
+            "type": "text", 
+            "text": prompt_text
+        }]
+        
+        # Add all uploaded files
+        for file_content in uploaded_files:
+            name = file_content['name']
+            message_content.append({
+                "type": "text",
+                "text": f"\n\n**FILE: {name}**"
+            })
+            
+            if file_content['type'] == 'pdf':
+                message_content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf", 
+                        "data": file_content['data']
+                    }
+                })
+            elif file_content['type'] == 'image':
+                message_content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": file_content['media_type'],
+                        "data": file_content['data'] 
+                    }
+                })
+        
+        # Use Opus 4.1 for superior visual analysis of chord diagrams
+        app.logger.info("Using Opus 4.1 for chord chart visual analysis")
+        response = client.messages.create(
+            model="claude-opus-4-1-20250805",
+            max_tokens=6000,
+            messages=[{
+                "role": "user",
+                "content": message_content
+            }]
+        )
+        
+        response_text = response.content[0].text
+        
+        # Parse JSON response
+        chord_data = parse_json_response(response_text)
+        if chord_data is None:
+            return {'error': 'Failed to parse chord chart data from analysis response'}
+        
+        # Create chord charts from the structured data  
+        created_charts = create_chord_charts_from_data(chord_data, item_id)
+        
+        return {
+            'success': True,
+            'message': f'Imported {len(created_charts)} chord charts',
+            'charts': created_charts,
+            'analysis': chord_data
+        }
+        
+    except Exception as e:
+        app.logger.error(f"Error processing chord charts: {str(e)}")
+        return {'error': f'Failed to process chord charts: {str(e)}'}
+
+def process_chord_names_with_lyrics(client, uploaded_files, item_id):
+    """Process files with chord names above lyrics using CommonChords lookup"""
+    try:
+        app.logger.info("Processing chord names above lyrics with CommonChords lookup")
+        
+        prompt_text = """🎸 **Hey Claude! Chord Names from Lyrics Processing**
+
+Hi there! This time I need your help with a different type of file - these are lyrics sheets with chord names written above the words (like "G" or "Am" or "F7" above the lyrics), NOT chord diagrams with dots and lines.
+
+**What you're looking for:**
+- Chord symbols like G, C, Am, F, D7, etc. positioned above lyrics
+- Song sections marked like [Verse], [Chorus], [Bridge], [Intro], etc.
+- The order that chords appear within each section
+- Sometimes there might be repeat markers like "x2" or chord timing
+
+**Your job:**
+- Extract all the chord names exactly as written (don't "correct" them)
+- Group them by song sections 
+- Keep them in the order they appear
+- Preserve the song structure the songwriter intended
+
+**OUTPUT FORMAT:**
+```json
+{
+  "tuning": "EADGBE",
+  "capo": 0,
+  "sections": [
+    {
+      "label": "Verse",
+      "chords": [
+        {
+          "name": "G",
+          "sourceType": "chord_names",
+          "lineBreakAfter": false
+        },
+        {
+          "name": "C", 
+          "sourceType": "chord_names",
+          "lineBreakAfter": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Key difference from chord diagrams:** Here you're just reading text/chord symbols, not analyzing visual finger positions. So if you see "Am7" written above some lyrics, just extract "Am7" - don't worry about what frets that chord uses.
+
+**A few helpful tips:**
+- Sometimes chords repeat in a progression like "G - C - G - C" - capture each occurrence
+- Watch for timing info like "Em (hold)" or "F x4" 
+- Section names can vary: Verse, Verse 1, Chorus, Bridge, Outro, etc.
+- If you're not sure which section a chord belongs to, your best guess is fine
+- Use EXACT chord names from document (G, C, Am, F7, etc.)
+- Preserve section structure and progression order
+
+Thanks for helping me extract these chord progressions! This saves me tons of time.
+
+**One last technical note:** Please set lineBreakAfter: true for chords at the end of lines/phrases, and return only the JSON format shown above (no extra explanatory text). Thanks!"""
+
+        message_content = [{
+            "type": "text",
+            "text": prompt_text
+        }]
+        
+        # Add all uploaded files
+        for file_content in uploaded_files:
+            name = file_content['name']
+            message_content.append({
+                "type": "text", 
+                "text": f"\n\n**FILE: {name}**"
+            })
+            
+            if file_content['type'] == 'pdf':
+                message_content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf", 
+                        "data": file_content['data']
+                    }
+                })
+            elif file_content['type'] == 'image':
+                message_content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": file_content['media_type'],
+                        "data": file_content['data']
+                    }
+                })
+        
+        # Use Sonnet 4 for chord names analysis (cost-efficient)
+        app.logger.info("Using Sonnet 4 for chord names analysis")
+        app.logger.info(f"Making API call with {len(message_content)} content items")
+        
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4000,
+                temperature=0.1,
+                messages=[{"role": "user", "content": message_content}]
+            )
+            app.logger.info("API call successful, response received")
+        except Exception as api_error:
+            app.logger.error(f"API call failed: {str(api_error)}")
+            return {'error': f'Claude API call failed: {str(api_error)}'}
+        
+        # Parse Claude's response
+        response_text = response.content[0].text.strip()
+        app.logger.info(f"Claude response for chord names: {response_text[:500]}...")
+        
+        if not response_text:
+            app.logger.error("Empty response from Claude API")
+            return {'error': 'Empty response from Claude API'}
+            
+        # Try to extract JSON from response (might be wrapped in markdown)
+        try:
+            # Look for JSON block in markdown
+            if '```json' in response_text:
+                json_start = response_text.find('```json') + 7
+                json_end = response_text.find('```', json_start)
+                json_text = response_text[json_start:json_end].strip()
+            else:
+                json_text = response_text
+                
+            chord_data = json.loads(json_text)
+        except json.JSONDecodeError as parse_error:
+            app.logger.error(f"Failed to parse JSON response: {parse_error}")
+            app.logger.error(f"Response was: {response_text}")
+            return {'error': f'Failed to parse chord chart data from analysis response: {str(parse_error)}'}
+        
+        # Create chord charts from the structured data using CommonChords lookup
+        created_charts = create_chord_charts_from_data(chord_data, item_id)
+        
+        return {
+            'success': True,
+            'message': f'Imported {len(created_charts)} chord charts',
+            'charts': created_charts,
+            'analysis': chord_data
+        }
+        
+    except Exception as e:
+        app.logger.error(f"Error processing chord names: {str(e)}")
+        return {'error': f'Failed to process chord names: {str(e)}'}
+
+
+def parse_json_response(response_text):
+    """Helper function to parse JSON from Claude's response"""
+    try:
+        import re
+        # Find JSON in the response (Claude might wrap it in markdown)
+        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find JSON without markdown wrapper
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                app.logger.error("No valid JSON found in Claude's response")
+                app.logger.error(f"Response was: {response_text}")
+                return None
+        
+        chord_data = json.loads(json_str)
+        return chord_data
+        
+    except (json.JSONDecodeError, ValueError) as e:
+        app.logger.error(f"Failed to parse Claude's response as JSON: {e}")
+        app.logger.error(f"Response was: {response_text}")
+        return None
 
 def create_chord_charts_from_data(chord_data, item_id):
     """Create chord charts in Google Sheets from parsed chord data using batch operations"""
@@ -1818,12 +2374,108 @@ def create_chord_charts_from_data(chord_data, item_id):
             app.logger.warning(f"Failed to load common chords: {str(e)}")
             all_common_chords = []
         
+        # Log Claude's visual analysis for debugging
+        try:
+            if 'analysis' in chord_data:
+                analysis = chord_data.get('analysis', {})
+                if 'referenceChordDescriptions' in analysis:
+                    app.logger.info("=== Claude's Visual Analysis of Reference Chord Diagrams ===")
+                    for ref_chord in analysis['referenceChordDescriptions']:
+                        app.logger.info(f"Chord: {ref_chord.get('name', 'Unknown')}")
+                        app.logger.info(f"Visual Description: {ref_chord.get('visualDescription', 'No description')}")
+                        app.logger.info(f"Extracted Pattern: {ref_chord.get('extractedPattern', 'No pattern')}")
+                        # Add position marker debugging info if present in description
+                        description = ref_chord.get('visualDescription', '')
+                        if 'fr' in description.lower():
+                            app.logger.info(f"🎯 Position marker detected in description: {description}")
+                    app.logger.info("=== End Visual Analysis ===")
+                else:
+                    app.logger.info("No reference chord descriptions found in analysis")
+            else:
+                app.logger.info("No analysis field found in Claude response (using older prompt format)")
+        except Exception as e:
+            app.logger.warning(f"Error logging Claude visual analysis: {str(e)}")
+        
+        # REFERENCE-FIRST APPROACH: When reference files are present, use them directly
+        reference_chord_shapes = []  # Reference chord shapes in order of appearance
+        reference_chord_by_name = {}  # Map: chord_name -> reference_chord_data
+        
+        # Extract reference chord shapes in order of appearance
+        if 'analysis' in chord_data:
+            analysis = chord_data.get('analysis', {})
+            if 'referenceChordDescriptions' in analysis:
+                app.logger.info("=== REFERENCE-FIRST: Using Reference Chord Patterns Directly ===")
+                for ref_chord in analysis['referenceChordDescriptions']:
+                    chord_name = ref_chord.get('name', '').strip()
+                    extracted_pattern = ref_chord.get('extractedPattern', [])
+                    
+                    if chord_name and extracted_pattern:
+                        # Clean chord name (remove capo suffix)
+                        clean_name = chord_name.replace('(capoOn2)', '').replace('(capoon2)', '').strip()
+                        
+                        reference_chord_data = {
+                            'name': clean_name,
+                            'frets': extracted_pattern,
+                            'source': 'reference_diagram'
+                        }
+                        
+                        reference_chord_shapes.append(reference_chord_data)
+                        # Also create name-based lookup for intelligent matching
+                        reference_chord_by_name[clean_name.lower()] = reference_chord_data
+                        
+                        app.logger.info(f"Reference chord #{len(reference_chord_shapes)}: {clean_name} → {extracted_pattern}")
+                
+                app.logger.info(f"✅ Loaded {len(reference_chord_shapes)} reference chords for direct use")
+            else:
+                app.logger.info("No reference chord descriptions found - will use chord names approach")
+        else:
+            app.logger.info("No analysis field found - will use chord names approach")
+        
+        # When no reference chords, we'll fall back to CommonChords lookup for chord names
+        if not reference_chord_shapes:
+            app.logger.info("=== NO REFERENCE DIAGRAMS: Will use CommonChords lookup for chord names ===")
+        
         # Collect all chord charts to create in one batch
         all_chord_charts = []
         chart_order = 0
         
-        for section in chord_data.get('sections', []):
-            section_label = section.get('label', 'Section')
+        # INTELLIGENT MISMATCH HANDLING: When reference has more chords than chord data
+        if reference_chord_shapes:
+            app.logger.info("=== INTELLIGENT REFERENCE-CHORD DATA INTEGRATION ===")
+            
+            # Count chords in chord data sections  
+            total_chord_instances = sum(len(section.get('chords', [])) for section in chord_data.get('sections', []))
+            app.logger.info(f"Chord data has {total_chord_instances} chord instances across all sections")
+            app.logger.info(f"Reference file has {len(reference_chord_shapes)} unique chord shapes")
+            
+            if len(reference_chord_shapes) > total_chord_instances:
+                app.logger.info(f"📊 MISMATCH DETECTED: Reference file contains MORE chords than chord data")
+                app.logger.info(f"📊 SOLUTION: Will include ALL reference chords, organized by chord data structure")
+                
+                # Add extra reference chords to the last section to ensure they're all included
+                sections = chord_data.get('sections', [])
+                if sections:
+                    last_section = sections[-1]
+                    existing_chord_names = {chord.get('name', '').lower() for section in sections for chord in section.get('chords', [])}
+                    
+                    # Add any reference chords not found in chord data to the last section
+                    for ref_chord in reference_chord_shapes:
+                        ref_name = ref_chord['name'].lower()
+                        if ref_name not in existing_chord_names:
+                            app.logger.info(f"🔍 Adding missing reference chord to last section: {ref_chord['name']}")
+                            last_section.setdefault('chords', []).append({
+                                'name': ref_chord['name'],
+                                'frets': ref_chord['frets'],
+                                'sourceType': 'reference_only'
+                            })
+        
+        # Use sections as provided by Claude analysis (preserve section structure)
+        sections = chord_data.get('sections', [])
+        if not sections:
+            sections = [{'label': 'Chords', 'chords': []}]
+        
+        for section in sections:
+            section_label = section.get('label', 'Chords')
             section_repeat = section.get('repeatCount', '')
             
             # Generate a unique section ID
@@ -1832,18 +2484,112 @@ def create_chord_charts_from_data(chord_data, item_id):
             
             for chord in section.get('chords', []):
                 chord_name = chord.get('name', 'Unknown')
+                chord_frets = chord.get('frets', [])
+                chord_fingers = chord.get('fingers', [])
+                source_type = chord.get('sourceType', 'chord_names')  # Default to chord_names if not specified
                 
-                # Find the chord in pre-loaded common chords (case-insensitive)
+                # REFERENCE-FIRST APPROACH: Check for reference chord by name
+                reference_match = None
+                if reference_chord_shapes and chord_name.lower() != 'unknown':
+                    reference_match = reference_chord_by_name.get(chord_name.lower())
+                    
+                    if reference_match:
+                        # Use reference chord shape and name directly
+                        original_chord_data = f"{chord_name}: {chord_frets}" if chord_frets else f"{chord_name}: no frets"
+                        chord_frets = reference_match['frets']
+                        chord_name = reference_match['name']
+                        source_type = 'reference_direct'
+                        app.logger.info(f"✅ REFERENCE-FIRST: {original_chord_data} → {chord_name} {chord_frets}")
+                    else:
+                        app.logger.debug(f"No reference match found for chord name '{chord_name}'")
+                
+                # Simplified processing: reference patterns or direct chord data
+                use_reference_pattern = (source_type in ['reference', 'reference_direct', 'reference_only'] and chord_frets)
+                use_direct_pattern = (source_type == 'chord_names' and chord_frets and tuning != 'EADGBE')
+                
+                if use_reference_pattern:
+                    app.logger.info(f"✅ Using reference diagram: {chord_name} = {chord_frets} in {tuning}")
+                elif use_direct_pattern:
+                    app.logger.info(f"✅ Using direct chord pattern: {chord_name} = {chord_frets} in {tuning}")
+                
+                # Find the chord in pre-loaded common chords (case-insensitive)  
                 common_chord = None
                 chord_name_lower = chord_name.lower()
-                for common in all_common_chords:
-                    if common.get('title', '').lower() == chord_name_lower:
-                        common_chord = common
-                        app.logger.debug(f"Found {chord_name} in pre-loaded CommonChords")
-                        break
                 
-                if common_chord:
-                    # Use the chord from CommonChords
+                # Only lookup in CommonChords for standard tuning when not using direct patterns
+                is_standard_tuning = tuning.upper() in ['EADGBE', 'STANDARD']
+                if not (use_reference_pattern or use_direct_pattern):
+                    if not is_standard_tuning:
+                        app.logger.warning(f"⚠️  FALLBACK: Skipping CommonChords lookup for alternate tuning: {tuning}. CommonChords only contains EADGBE patterns.")
+                    elif chord_name_lower != 'unknown':
+                        for common in all_common_chords:
+                            if common.get('title', '').lower() == chord_name_lower:
+                                common_chord = common
+                                app.logger.info(f"📚 FALLBACK: Found {chord_name} in pre-loaded CommonChords by name")
+                                break
+                    
+                    # If not found by name and we have fret data, try to find by fret pattern (standard tuning only)
+                    if not common_chord and chord_frets and is_standard_tuning:
+                        # Try to match fret pattern in CommonChords (for transposed patterns)
+                        for common in all_common_chords:
+                            common_frets = common.get('frets', [])
+                            if common_frets == chord_frets:
+                                common_chord = common
+                                chord_name = common.get('title', chord_name)  # Use the chord name from CommonChords
+                                app.logger.info(f"📚 FALLBACK: Found chord by fret pattern match: {chord_name}")
+                                break
+                
+                # Create chord chart data (unified processing for reference patterns or direct patterns)
+                if use_reference_pattern or use_direct_pattern:
+                    frets = chord_frets
+                    
+                    # Build SVGuitar-compatible data from chord pattern
+                    open_strings = []
+                    muted_strings = []
+                    svguitar_fingers = []
+                    
+                    if frets:
+                        finger_number = 1  # Auto-assign finger numbers
+                        for i, fret_val in enumerate(frets):
+                            # Convert AI array format to SVGuitar format
+                            # AI: [low E, A, D, G, B, high E] → SVGuitar: string 1=high E, string 6=low E
+                            string_num = 6 - i
+                            if fret_val == 0:
+                                open_strings.append(string_num)
+                            elif fret_val == -1:
+                                muted_strings.append(string_num)
+                            elif fret_val > 0:
+                                svguitar_fingers.append([string_num, fret_val, str(finger_number)])
+                                finger_number += 1
+                    
+                    # 🔧 SVGuitar Debug Logging (Reference Pattern Path)
+                    app.logger.info(f"🔧 SVGuitar Conversion Debug for {chord_name} (Reference Pattern):")
+                    app.logger.info(f"   Input frets: {frets}")
+                    app.logger.info(f"   SVGuitar fingers: {svguitar_fingers}")
+                    app.logger.info(f"   Open strings: {open_strings}")
+                    app.logger.info(f"   Muted strings: {muted_strings}")
+                    app.logger.info(f"   Tuning: {tuning}")
+                    
+                    chord_chart_data = {
+                        'title': chord_name,
+                        'tuning': tuning,
+                        'capo': capo,
+                        'numFrets': 5,
+                        'numStrings': len(frets) if frets else 6,
+                        'fingers': svguitar_fingers,
+                        'barres': [],
+                        'openStrings': open_strings,
+                        'mutedStrings': muted_strings,
+                        'sectionId': section_id,
+                        'sectionLabel': section_label,
+                        'sectionRepeatCount': section_repeat
+                    }
+                    
+                    source_desc = "reference diagram" if use_reference_pattern else "chord pattern"
+                    app.logger.info(f"✅ Created chord chart from {source_desc}: {chord_name} = {frets} in {tuning}")
+                
+                elif common_chord:
+                    # Use the chord from CommonChords (standard tuning path)
                     chord_chart_data = {
                         'title': chord_name,
                         'tuning': common_chord.get('tuning', tuning),
@@ -1861,25 +2607,64 @@ def create_chord_charts_from_data(chord_data, item_id):
                         'sectionRepeatCount': section_repeat
                     }
                 else:
-                    # Fallback: use raw data from Claude (only if chord not found in CommonChords)
-                    frets = chord.get('frets', [])
-                    fingers = chord.get('fingers', [])
+                    # Fallback: use raw data from Claude/chord analysis (chord not found in CommonChords)
+                    # Prioritize fret data from chord analysis over generic fallback
+                    frets = chord_frets if chord_frets else chord.get('frets', [])
+                    fingers = chord_fingers if chord_fingers else chord.get('fingers', [])
                     starting_fret = chord.get('startingFret', 1)
+                    
+                    # Calculate starting fret from fret pattern if not specified
+                    if frets and starting_fret == 1:
+                        non_zero_frets = [f for f in frets if f > 0]
+                        if non_zero_frets:
+                            starting_fret = min(non_zero_frets)
+                    
+                    # Convert frets to SVGuitar fingers format if fingers are empty but frets exist
+                    svguitar_fingers = fingers if fingers else []
+                    open_strings = []
+                    muted_strings = []
+                    
+                    if frets and not svguitar_fingers:
+                        app.logger.info(f"Converting frets to SVGuitar format for {chord_name}: {frets}")
+                        finger_number = 1  # Auto-assign finger numbers
+                        for i, fret_val in enumerate(frets):
+                            # Fix string numbering: AI arrays are [low E, A, D, G, B, high E] (index 0-5)
+                            # SVGuitar expects: string 1=high E, string 6=low E
+                            string_num = 6 - i  # Convert: index 0 (low E) → SVGuitar string 6
+                                                 #          index 5 (high E) → SVGuitar string 1
+                            if fret_val == 0:
+                                open_strings.append(string_num)
+                            elif fret_val == -1:  # Sometimes muted strings are marked as -1
+                                muted_strings.append(string_num)
+                            elif fret_val > 0:  # Fretted note
+                                svguitar_fingers.append([string_num, fret_val, str(finger_number)])
+                                finger_number += 1
+                    
+                    # 🔧 SVGuitar Debug Logging (Fallback Pattern Path)
+                    app.logger.info(f"🔧 SVGuitar Conversion Debug for {chord_name} (Fallback Pattern):")
+                    app.logger.info(f"   Input frets: {frets}")
+                    app.logger.info(f"   SVGuitar fingers: {svguitar_fingers}")
+                    app.logger.info(f"   Open strings: {open_strings}")
+                    app.logger.info(f"   Muted strings: {muted_strings}")
+                    app.logger.info(f"   Tuning: {tuning}")
                     
                     chord_chart_data = {
                         'title': chord_name,
                         'tuning': tuning,
                         'capo': capo,
-                        'startingFret': starting_fret,
                         'numFrets': 5,  # Default to 5 frets
                         'numStrings': len(frets) if frets else 6,
-                        'fingers': fingers,
+                        'fingers': svguitar_fingers,  # Use converted SVGuitar format
+                        'openStrings': open_strings,   # Derive from fret pattern
+                        'mutedStrings': muted_strings, # Derive from fret pattern
                         'frets': frets,
                         'barres': [],  # Could be enhanced to detect barres
                         'sectionId': section_id,
                         'sectionLabel': section_label,
                         'sectionRepeatCount': section_repeat
                     }
+                    
+                    app.logger.debug(f"Using chord fret data for {chord_name}: frets={frets}, fingers={fingers}")
                 
                 # Include the order in the chord data itself
                 chord_chart_data['order'] = chart_order
