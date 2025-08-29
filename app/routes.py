@@ -1647,10 +1647,13 @@ def autocreate_chord_charts():
         # Check if user provided a choice for mixed content
         user_choice = request.form.get('userChoice')
         if user_choice:
-            app.logger.info(f"User chose to process files as: {user_choice}")
+            app.logger.info(f"[AUTOCREATE] User chose to process files as: {user_choice}")
+            app.logger.info(f"[AUTOCREATE] Processing {len(uploaded_files)} files with user choice override")
             # Override file type detection with user choice
             for file_data in uploaded_files:
                 file_data['forced_type'] = user_choice
+        else:
+            app.logger.info(f"[AUTOCREATE] No user choice provided, will use automatic detection")
             
         # Get Anthropic API key from environment
         api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -1659,12 +1662,15 @@ def autocreate_chord_charts():
             
         # Initialize Anthropic client
         client = anthropic.Anthropic(api_key=api_key)
+        app.logger.info(f"[AUTOCREATE] Anthropic client initialized successfully")
         
         # Prepare the Claude analysis request
+        app.logger.info(f"[AUTOCREATE] Starting Claude analysis for item {item_id}")
         app.logger.debug("Sending files to Claude for analysis")
         
         # Create the analysis prompt
         analysis_result = analyze_files_with_claude(client, uploaded_files, item_id)
+        app.logger.info(f"[AUTOCREATE] Claude analysis completed, result type: {type(analysis_result)}")
         
         app.logger.debug("Claude analysis complete, creating chord charts")
         
@@ -1946,8 +1952,30 @@ Analyze the files below:"""
 def analyze_files_with_claude(client, uploaded_files, item_id):
     """Simplified analysis: detect file type and process accordingly"""
     try:
+        app.logger.info(f"[AUTOCREATE] analyze_files_with_claude called with {len(uploaded_files)} files for item {item_id}")
+        
+        # Check if user forced a type choice
+        forced_type = None
+        for file_data in uploaded_files:
+            if 'forced_type' in file_data:
+                forced_type = file_data['forced_type']
+                break
+                
+        if forced_type:
+            app.logger.info(f"[AUTOCREATE] User forced processing as: {forced_type}")
+            # Skip detection, go straight to processing
+            if forced_type == 'chord_charts':
+                app.logger.info(f"[AUTOCREATE] Processing as chord charts (user choice)")
+                return process_chord_charts_directly(client, uploaded_files, item_id)
+            elif forced_type == 'chord_names':
+                app.logger.info(f"[AUTOCREATE] Processing as chord names (user choice)")
+                return process_chord_names_with_lyrics(client, uploaded_files, item_id)
+            else:
+                app.logger.warning(f"[AUTOCREATE] Unknown forced type: {forced_type}, falling back to chord names")
+                return process_chord_names_with_lyrics(client, uploaded_files, item_id)
+        
         # Step 1: File type detection using Sonnet 4
-        app.logger.info(f"Step 1: Analyzing {len(uploaded_files)} files to detect content type using Sonnet 4")
+        app.logger.info(f"[AUTOCREATE] Step 1: Analyzing {len(uploaded_files)} files to detect content type using Sonnet 4")
         file_type_result = detect_file_types_with_sonnet(client, uploaded_files)
         
         # Step 2: Process based on detected content type
@@ -2184,6 +2212,7 @@ Thanks so much for being thorough with this, you rock Claude! 🤘🎸🚀"""
 def process_chord_names_with_lyrics(client, uploaded_files, item_id):
     """Process files with chord names above lyrics using CommonChords lookup"""
     try:
+        app.logger.info(f"[AUTOCREATE] process_chord_names_with_lyrics called with {len(uploaded_files)} files for item {item_id}")
         app.logger.info("Processing chord names above lyrics with CommonChords lookup")
         
         prompt_text = """🎸 **Hey Claude! Chord Names from Lyrics Processing**
@@ -2274,24 +2303,30 @@ Thanks for helping me extract these chord progressions! This saves me tons of ti
                 })
         
         # Use Sonnet 4 for chord names analysis (cost-efficient)
-        app.logger.info("Using Sonnet 4 for chord names analysis")
-        app.logger.info(f"Making API call with {len(message_content)} content items")
+        app.logger.info(f"[AUTOCREATE] Using Sonnet 4 for chord names analysis")
+        app.logger.info(f"[AUTOCREATE] Making API call with {len(message_content)} content items")
+        app.logger.info(f"[AUTOCREATE] Message content types: {[item.get('type', 'unknown') for item in message_content]}")
         
         try:
+            app.logger.info(f"[AUTOCREATE] Starting Anthropic API call to claude-sonnet-4-20250514")
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=4000,
+                max_tokens=8000,  # Increased for complex songs with multiple sections
                 temperature=0.1,
                 messages=[{"role": "user", "content": message_content}]
             )
-            app.logger.info("API call successful, response received")
+            app.logger.info(f"[AUTOCREATE] API call successful, response received with {len(response.content)} content items")
+            if response.content:
+                app.logger.info(f"[AUTOCREATE] Response content length: {len(response.content[0].text) if response.content[0].text else 0} characters")
         except Exception as api_error:
-            app.logger.error(f"API call failed: {str(api_error)}")
+            app.logger.error(f"[AUTOCREATE] API call failed: {str(api_error)}")
+            app.logger.error(f"[AUTOCREATE] API error type: {type(api_error)}")
             return {'error': f'Claude API call failed: {str(api_error)}'}
         
         # Parse Claude's response
         response_text = response.content[0].text.strip()
-        app.logger.info(f"Claude response for chord names: {response_text[:500]}...")
+        app.logger.info(f"[AUTOCREATE] Parsing Claude response for chord names")
+        app.logger.info(f"[AUTOCREATE] Claude response preview: {response_text[:500]}...")
         
         if not response_text:
             app.logger.error("Empty response from Claude API")
@@ -2309,9 +2344,27 @@ Thanks for helping me extract these chord progressions! This saves me tons of ti
                 
             chord_data = json.loads(json_text)
         except json.JSONDecodeError as parse_error:
-            app.logger.error(f"Failed to parse JSON response: {parse_error}")
-            app.logger.error(f"Response was: {response_text}")
-            return {'error': f'Failed to parse chord chart data from analysis response: {str(parse_error)}'}
+            app.logger.error(f"[AUTOCREATE] Failed to parse JSON response: {parse_error}")
+            app.logger.error(f"[AUTOCREATE] Parse error location: line {getattr(parse_error, 'lineno', 'unknown')} column {getattr(parse_error, 'colno', 'unknown')}")
+            app.logger.error(f"[AUTOCREATE] Response length: {len(response_text)} characters")
+            app.logger.error(f"[AUTOCREATE] Response preview (first 1000 chars): {response_text[:1000]}")
+            app.logger.error(f"[AUTOCREATE] Response end (last 500 chars): {response_text[-500:]}")
+            
+            # Try to extract JSON from markdown code blocks if present
+            import re
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    clean_json = json_match.group(1)
+                    app.logger.info(f"[AUTOCREATE] Found JSON in markdown, attempting to parse {len(clean_json)} chars")
+                    chord_data = json.loads(clean_json)
+                    app.logger.info(f"[AUTOCREATE] Successfully parsed JSON from markdown!")
+                except json.JSONDecodeError as clean_parse_error:
+                    app.logger.error(f"[AUTOCREATE] Even markdown-extracted JSON failed to parse: {clean_parse_error}")
+                    return {'error': f'Failed to parse chord chart data - JSON truncated or malformed. Error: {str(parse_error)}'}
+            else:
+                app.logger.error(f"[AUTOCREATE] No markdown JSON blocks found in response")
+                return {'error': f'Failed to parse chord chart data from analysis response: {str(parse_error)}'}
         
         # Create chord charts from the structured data using CommonChords lookup
         created_charts = create_chord_charts_from_data(chord_data, item_id)
@@ -2365,10 +2418,12 @@ def create_chord_charts_from_data(chord_data, item_id):
         
         # Pre-load all common chords efficiently to reduce API calls
         try:
+            app.logger.info(f"[AUTOCREATE] Starting CommonChords lookup - getting all common chords efficiently")
             all_common_chords = get_common_chords_efficiently()
-            app.logger.info(f"Efficiently loaded {len(all_common_chords)} common chords for autocreate")
+            app.logger.info(f"[AUTOCREATE] Successfully loaded {len(all_common_chords)} common chords for autocreate")
         except Exception as e:
-            app.logger.warning(f"Failed to load common chords: {str(e)}")
+            app.logger.error(f"[AUTOCREATE] Failed to load common chords: {str(e)}")
+            app.logger.error(f"[AUTOCREATE] CommonChords error type: {type(e)}")
             all_common_chords = []
         
         # Log Claude's visual analysis for debugging
@@ -2672,8 +2727,16 @@ def create_chord_charts_from_data(chord_data, item_id):
         if all_chord_charts:
             chord_data_list = [chart_data for _, _, chart_data in all_chord_charts]
             
-            app.logger.info(f"Batch creating {len(chord_data_list)} chord charts for item {item_id}")
-            batch_results = batch_add_chord_charts(item_id, chord_data_list)
+            app.logger.info(f"[AUTOCREATE] Batch creating {len(chord_data_list)} chord charts for item {item_id}")
+            app.logger.info(f"[AUTOCREATE] Starting batch_add_chord_charts API call to Google Sheets")
+            
+            try:
+                batch_results = batch_add_chord_charts(item_id, chord_data_list)
+                app.logger.info(f"[AUTOCREATE] Batch creation completed, got {len(batch_results)} results")
+            except Exception as batch_error:
+                app.logger.error(f"[AUTOCREATE] Batch creation failed: {str(batch_error)}")
+                app.logger.error(f"[AUTOCREATE] Batch error type: {type(batch_error)}")
+                raise
             
             # Build response with chord names and sections
             for (chord_name, section_label, _), result in zip(all_chord_charts, batch_results):

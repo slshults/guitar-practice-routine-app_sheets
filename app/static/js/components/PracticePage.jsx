@@ -16,7 +16,7 @@ import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
 import { useItemDetails } from '@hooks/useItemDetails';
 import { usePracticeItems } from '@hooks/usePracticeItems';
-import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, X, Wand, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, X, Wand, Sparkles, Loader2 } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
 import ApiErrorModal from './ApiErrorModal';
@@ -291,6 +291,9 @@ export const PracticePage = () => {
   const [showAutocreateZone, setShowAutocreateZone] = useState({});
   const [autocreateAbortController, setAutocreateAbortController] = useState({});
   const [processingMessageIndex, setProcessingMessageIndex] = useState(0);
+  const [messageQueue, setMessageQueue] = useState([]);
+  const [showCancelConfirmation, setShowCancelConfirmation] = useState(false);
+  const [pendingCancelItemId, setPendingCancelItemId] = useState(null);
   
   // Single file tracking for all uploaded files
   const [uploadedFiles, setUploadedFiles] = useState({});
@@ -306,12 +309,22 @@ export const PracticePage = () => {
   // Rotating processing messages for entertainment
   const processingMessages = [
     "✨ Claude is making magic happen",
+    "✨ Claude is *still* making magic happen",
     "Yeah, we all love instant gratification, but some things are worth waiting for",
     "Good things come to those who wait",
     "Chill. Patience is a virtue",
     "You could be stretching or something while you wait, couldn't you?",
-    "Rome wasn't built in a day... neither are chord charts",
-    "Perfect chord charts take time to craft"
+    "The pyramids weren't built in a day... neither are chord charts",
+    "Perfect chord charts take time to craft",
+    "Yeah, I could show you a progress bar, but we both know it would just lie to you",
+    "This is taking precisely as long as it needs to take",
+    "Meanwhile, your guitar is getting dusty just sitting there...",
+    "Quality over speed, as they say in the chord chart business",
+    "Calculating the optimal finger placement for maximum laziness...",
+    "Teaching AI to read guitar tabs is harder than teaching humans, surprisingly",
+    "Processing at the speed of artisanal chord crafting",
+    "Your patience is being converted into beautiful chord diagrams",
+    "Still faster than learning these chords by ear, trust me"
   ];
 
   // Helper function to group chords into sections based on persisted metadata
@@ -697,13 +710,39 @@ export const PracticePage = () => {
     const processingItems = Object.values(autocreateProgress).filter(progress => progress === 'processing');
     
     if (processingItems.length === 0) {
-      // Reset message index when no processing
+      // Reset message state when no processing
       setProcessingMessageIndex(0);
+      setMessageQueue([]);
       return;
     }
     
+    // Always start with the first message
+    setProcessingMessageIndex(0);
+    // Create initial shuffled queue excluding the first message
+    const remainingMessages = Array.from({length: processingMessages.length - 1}, (_, i) => i + 1);
+    const shuffled = remainingMessages.sort(() => Math.random() - 0.5);
+    setMessageQueue(shuffled);
+    
     const interval = setInterval(() => {
-      setProcessingMessageIndex(prev => (prev + 1) % processingMessages.length);
+      setMessageQueue(prevQueue => {
+        if (prevQueue.length === 0) {
+          // Queue is empty, create new shuffled queue of all messages
+          const allMessages = Array.from({length: processingMessages.length}, (_, i) => i);
+          const newShuffled = allMessages.sort(() => Math.random() - 0.5);
+          const nextIndex = newShuffled[0];
+          const newQueue = newShuffled.slice(1);
+          
+          setProcessingMessageIndex(nextIndex);
+          return newQueue;
+        } else {
+          // Take next message from queue
+          const nextIndex = prevQueue[0];
+          const newQueue = prevQueue.slice(1);
+          
+          setProcessingMessageIndex(nextIndex);
+          return newQueue;
+        }
+      });
     }, 10000); // 10 seconds
     
     return () => clearInterval(interval);
@@ -1667,6 +1706,24 @@ export const PracticePage = () => {
     });
   };
 
+  const handleShowCancelConfirmation = (itemId) => {
+    setPendingCancelItemId(itemId);
+    setShowCancelConfirmation(true);
+  };
+
+  const handleConfirmCancel = () => {
+    if (pendingCancelItemId) {
+      handleCancelAutocreate(pendingCancelItemId);
+    }
+    setShowCancelConfirmation(false);
+    setPendingCancelItemId(null);
+  };
+
+  const handleCancelDialog = () => {
+    setShowCancelConfirmation(false);
+    setPendingCancelItemId(null);
+  };
+
   const handleSingleFileDrop = (itemId, files) => {
     if (!files || files.length === 0) return;
     
@@ -1682,6 +1739,8 @@ export const PracticePage = () => {
   const handleProcessFiles = async (itemId) => {
     const files = uploadedFiles[itemId] || [];
     
+    console.log(`[AUTOCREATE] handleProcessFiles called for item ${itemId}, files:`, files.length);
+    
     if (files.length === 0) {
       alert('Please add at least one file before processing.');
       return;
@@ -1695,9 +1754,13 @@ export const PracticePage = () => {
     
     const { itemId, files } = mixedContentData;
     
+    console.log(`[AUTOCREATE] handleMixedContentChoice called with contentType: ${contentType}, itemId: ${itemId}, files:`, files.length);
+    
     try {
       setAutocreateProgress({ [itemId]: 'processing' });
       setShowMixedContentModal(false);
+      
+      console.log(`[AUTOCREATE] Starting processing for ${contentType} with ${files.length} files`);
       
       // Create FormData and add user choice
       const formData = new FormData();
@@ -1715,10 +1778,14 @@ export const PracticePage = () => {
       formData.append('itemId', itemId);
       formData.append('userChoice', contentType); // Add user's choice
       
+      console.log(`[AUTOCREATE] Sending API request to /api/autocreate-chord-charts`);
+      
       const response = await fetch('/api/autocreate-chord-charts', {
         method: 'POST',
         body: formData
       });
+      
+      console.log(`[AUTOCREATE] API response status: ${response.status} ${response.statusText}`);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -1727,7 +1794,10 @@ export const PracticePage = () => {
       
       const result = await response.json();
       
+      console.log(`[AUTOCREATE] API response data:`, result);
+      
       if (result.success) {
+        console.log(`[AUTOCREATE] Processing successful, setting state to complete`);
         setAutocreateProgress({ [itemId]: 'complete' });
         
         // Force refresh chord charts
@@ -1762,7 +1832,12 @@ export const PracticePage = () => {
         }, 2000);
       }
     } catch (error) {
-      console.error('Error processing mixed content choice:', error);
+      console.error(`[AUTOCREATE] Error processing mixed content choice:`, error);
+      console.error(`[AUTOCREATE] Full error details:`, {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
       setAutocreateProgress({ [itemId]: 'error' });
       setMixedContentData(null);
     }
@@ -2173,10 +2248,19 @@ export const PracticePage = () => {
                                 />
                                 <button
                                   onClick={() => deleteSection(itemReferenceId, section.id)}
-                                  className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-xs font-bold transition-colors"
-                                  title="Delete section"
+                                  disabled={deletingSection.size > 0}
+                                  className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                                    deletingSection.size > 0 
+                                      ? 'bg-gray-500 cursor-not-allowed' 
+                                      : 'bg-red-600 hover:bg-red-700 cursor-pointer'
+                                  } text-white`}
+                                  title={deletingSection.size > 0 ? "Deleting..." : "Delete section"}
                                 >
-                                  ×
+                                  {deletingSection.size > 0 ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    '×'
+                                  )}
                                 </button>
                               </div>
                             </div>
@@ -2377,10 +2461,11 @@ export const PracticePage = () => {
                                                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
                                                     <span className="text-blue-400">Uploading files...</span>
                                                   </div>
+                                                  <br />
                                                   <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    onClick={() => handleCancelAutocreate(itemReferenceId)}
+                                                    onClick={() => handleShowCancelConfirmation(itemReferenceId)}
                                                     className="text-gray-400 hover:text-gray-200 border-gray-600"
                                                   >
                                                     <X className="h-3 w-3 mr-1" />
@@ -2397,10 +2482,11 @@ export const PracticePage = () => {
                                                       <div className="ml-2 animate-spin">⚙️</div>
                                                     </div>
                                                   </div>
+                                                  <br />
                                                   <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    onClick={() => handleCancelAutocreate(itemReferenceId)}
+                                                    onClick={() => handleShowCancelConfirmation(itemReferenceId)}
                                                     className="text-gray-400 hover:text-gray-200 border-gray-600"
                                                   >
                                                     <X className="h-3 w-3 mr-1" />
@@ -2780,6 +2866,26 @@ export const PracticePage = () => {
               setUnsupportedFormatData(null);
             }}>
               OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={showCancelConfirmation} onOpenChange={setShowCancelConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you wanna do that?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You'll have to wait just as long next time if you start over
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelDialog}>
+              *sigh* Ok, I'll wait...
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmCancel}>
+              Yes, damnit, cancel!
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

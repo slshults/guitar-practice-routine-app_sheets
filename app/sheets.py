@@ -100,9 +100,27 @@ def get_credentials():
                     os.remove(token_file)
                     
         # Either no token file or refresh failed
-        logging.debug("Creating new flow")
-        flow = Flow.from_client_secrets_file(
-            'client_secret.json',
+        logging.debug("Creating new flow from environment variables")
+        
+        # Build client config from environment variables
+        client_config = {
+            "installed": {
+                "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+                "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+                "project_id": os.getenv('GOOGLE_PROJECT_ID', 'practiceroutineapp'),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "redirect_uris": ["http://localhost"]
+            }
+        }
+        
+        # Validate required environment variables
+        if not client_config["installed"]["client_id"] or not client_config["installed"]["client_secret"]:
+            raise ValueError("Missing required Google OAuth environment variables: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
+        
+        flow = Flow.from_client_config(
+            client_config,
             scopes=['https://www.googleapis.com/auth/spreadsheets'],
             redirect_uri=current_app.config['OAUTH2_REDIRECT_URI']
         )
