@@ -1704,7 +1704,7 @@ export const PracticePage = () => {
       files.forEach((file, index) => {
         // We need to reconstruct the file from the base64 data
         const byteCharacters = atob(file.data);
-        const byteNumbers = new Array(byteCharacters.length);
+        const byteNumbers = Array.from({ length: byteCharacters.length });
         for (let i = 0; i < byteCharacters.length; i++) {
           byteNumbers[i] = byteCharacters.charCodeAt(i);
         }
@@ -2285,11 +2285,11 @@ export const PracticePage = () => {
                                       
                                       {zoneExpanded && (
                                         <div className="border border-green-600/30 rounded-lg p-4 bg-green-900/10">
-                                          <p className="text-sm text-gray-400 mb-6">
-                                            To autocreate chord charts for songs in standard tuning: Upload a file showing lyrics with chord names above the lyrics, or a PDF or image showing the chord names written out by song section.
-
-To import chord charts (standard and alternate tunings): Upload a file showing your chord charts, and we'll rebuild them for you here.
-                                          </p>
+                                          <div className="text-sm text-gray-400 mb-6">
+                                            <p>To autocreate chord charts for songs in standard tuning: Upload a file showing lyrics with chord names above the lyrics, or a PDF or image showing the chord names written out by song section.</p>
+                                            <br />
+                                            <p>To import chord charts (standard and alternate tunings): Upload a file showing your chord charts, and we'll rebuild them for you here.</p>
+                                          </div>
                                           
                                           {/* Single drop zone for all files */}
                                           <div
@@ -2450,8 +2450,7 @@ To import chord charts (standard and alternate tunings): Upload a file showing y
                                                             <>
                                                               <Sparkles className="h-8 w-8 text-gray-400 mx-auto mb-2" />
                                                               <p className="text-gray-300 font-medium mb-1">Add files above, then click 'Create Chord Charts'</p>
-                                                              
-                                                              <p className="text-gray-400 text-xs mt-2">(The results will probably contain errors, use the ✏️edit icon to make any corrections needed.)</p>
+                                                              <p className="text-gray-400 text-xs">(The results will probably contain errors, use the ✏️edit icon to make any corrections needed.)</p>
                                                             </>
                                                           );
                                                         }

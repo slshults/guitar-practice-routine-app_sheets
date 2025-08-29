@@ -2,11 +2,11 @@ from flask import render_template, request, jsonify, redirect, session, url_for
 from app import app # type: ignore
 from app.sheets import ( # type: ignore
     get_all_items, add_item, update_item, delete_item,
-    get_routine, add_to_routine, get_all_routines,
+    add_to_routine, get_all_routines,
     test_sheets_connection, get_credentials, update_items_order,
-    create_routine, update_routine_order, update_routine_item,
+    create_routine, update_routine_item,
     remove_from_routine, delete_routine, get_active_routine, set_routine_active,
-    get_worksheet, get_spread, sheet_to_records, get_all_routine_records,
+    get_spread, sheet_to_records,
     records_to_sheet, get_chord_charts_for_item, add_chord_chart, batch_add_chord_charts,
     delete_chord_chart, update_chord_chart, update_chord_charts_order,
     get_common_chord_charts, search_common_chord_charts, seed_common_chord_charts, 
@@ -21,11 +21,9 @@ import math
 from typing import List, Dict
 from datetime import datetime
 import subprocess
-import platform
 from difflib import get_close_matches
 import re
 import base64
-import io
 import json
 from werkzeug.utils import secure_filename
 import anthropic
@@ -379,7 +377,6 @@ def oauth2callback():
     """Handle OAuth callback"""
     logging.debug("Entered oauth2callback")
     try:
-        state = session['state']
         _, flow = get_credentials()
         flow.redirect_uri = url_for('oauth2callback', _external=True)
 

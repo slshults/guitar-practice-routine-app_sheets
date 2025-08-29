@@ -84,7 +84,6 @@ function loadItem(item) {
     }
 
     if (addNoteBtn) {
-        addNoteBtn.removeEventListener('click', () => addNote(item['A']));  // Column A is ID
         addNoteBtn.addEventListener('click', () => {
             console.log('Add note button clicked');
             addNote(item['A']);  // Column A is ID
