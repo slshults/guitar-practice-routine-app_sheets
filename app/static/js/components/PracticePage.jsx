@@ -16,7 +16,7 @@ import { Button } from '@ui/button';
 import { useActiveRoutine } from '@hooks/useActiveRoutine';
 import { useItemDetails } from '@hooks/useItemDetails';
 import { usePracticeItems } from '@hooks/usePracticeItems';
-import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, X, Wand, Sparkles, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, FileText, Book, Music, Upload, AlertTriangle, X, Wand, Sparkles, Loader2, Printer } from 'lucide-react';
 import { NoteEditor } from './NoteEditor';
 import { ChordChartEditor } from './ChordChartEditor';
 import ApiErrorModal from './ApiErrorModal';
@@ -310,21 +310,22 @@ export const PracticePage = () => {
   const processingMessages = [
     "✨ Claude is making magic happen",
     "✨ Claude is *still* making magic happen",
-    "Yeah, we all love instant gratification, but some things are worth waiting for",
-    "Good things come to those who wait",
-    "Chill. Patience is a virtue",
+    "Yeah, we all love instant gratification, but it'll still be quicker than you could do it from scratch",
+    "Are you familiar with the phrase 'A watched pot never boils'? It's kinda like that",
+    "Chill, I'm working on it.",
     "You could be stretching or something while you wait, couldn't you?",
-    "The pyramids weren't built in a day... neither are chord charts",
-    "Perfect chord charts take time to craft",
+    "The pyramids weren't built in a day... ",
+    "but hey, at least I'm not going to ask you for an email address to send the chord charts to.",
+    "Perfect chord charts take time to craft. These will take less time and they won't be perfect.",
     "Yeah, I could show you a progress bar, but we both know it would just lie to you",
     "This is taking precisely as long as it needs to take",
     "Meanwhile, your guitar is getting dusty just sitting there...",
-    "Quality over speed, as they say in the chord chart business",
+    "Quality over speed, as they say in the chord chart business. We'll see which this turns out to be",
     "Calculating the optimal finger placement for maximum laziness...",
     "Teaching AI to read guitar tabs is harder than teaching humans, surprisingly",
     "Processing at the speed of artisanal chord crafting",
     "Your patience is being converted into beautiful chord diagrams",
-    "Still faster than learning these chords by ear, trust me"
+    "Still faster than drawing the chord charts by hand"
   ];
 
   // Helper function to group chords into sections based on persisted metadata
@@ -1570,6 +1571,24 @@ export const PracticePage = () => {
     setEditingChordId(null);
   };
 
+  // Print chord charts functionality
+  const handlePrintChords = (itemId) => {
+    console.log('Print button clicked for item:', itemId);
+    // Add print class to chord chart container
+    const chordContainer = document.querySelector(`[data-item-id="${itemId}"].chord-charts-container`);
+    console.log('Found container:', chordContainer);
+    if (chordContainer) {
+      chordContainer.classList.add('chord-chart-print-area');
+      window.print();
+      // Remove print class after printing
+      setTimeout(() => {
+        chordContainer.classList.remove('chord-chart-print-area');
+      }, 100);
+    } else {
+      console.error('Could not find chord charts container for item:', itemId);
+    }
+  };
+
   // Chord chart copy functionality
   const handleOpenCopyModal = (itemId) => {
     setCopySourceItemId(itemId);
@@ -2209,7 +2228,11 @@ export const PracticePage = () => {
 
                     {/* Collapsible chord chart content */}
                     {isChordsExpanded && (
-                      <div className="bg-gray-700 rounded-lg p-4">
+                      <div 
+                        className="bg-gray-700 rounded-lg p-4 chord-charts-container relative"
+                        data-item-id={routineItem['B']}
+                      >
+                        
                         {/* Display chord sections */}
                         {(() => {
                           // Define itemReferenceId at the top level of this scope
@@ -2337,6 +2360,22 @@ export const PracticePage = () => {
                               
                               {/* Add new section button */}
                               {/* Toggle for chord editor */}
+                              {/* Print button - floating above Add New Chord */}
+                              <div className="flex justify-end mb-2">
+                                <Button
+                                  variant="outline" 
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePrintChords(itemReferenceId);
+                                  }}
+                                  className="p-2 border-gray-600 text-gray-400 hover:text-gray-200 hover:bg-gray-600"
+                                  title="Print chord charts"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                </Button>
+                              </div>
+
                               <Button
                                 variant="outline"
                                 onClick={(e) => toggleChordEditor(itemReferenceId, e)}
