@@ -12,6 +12,76 @@ VERY IMPORTANT: A potential issue to keep an eye out for; Our goal for this app 
 
 So, if we run into any case-sensitivity issues while writing to or reading from any fields, we'll fix it by ignoring case / being case-agnostic. No converting case unless there's no other way around it.
 
+## Claude Model Coordination for Token Efficiency
+
+### Using the Task Tool for Implementation Work
+
+#### Division of Responsibilities
+
+This is IMPORTANT for managing rate-limiting and billing efficiency. **Sonnet 4 should be the default model** since Task tool calls are billed under the calling model's usage:
+
+**Sonnet 4 Role** claude-sonnet-4-20250514 (Default & Implementation):
+- File editing and code changes
+- Direct implementation of planned features
+- Routine refactoring and code updates
+- Following established patterns and conventions
+- Executing well-defined tasks with clear requirements
+- Basic debugging and troubleshooting
+- Most day-to-day development work
+
+**Opus 4.1 Role** claude-opus-4-1-20250805 (Complex Analysis via Task Tool):
+- Complex analysis and architectural decisions
+- Multi-file code investigation and understanding
+- Task planning and breaking down requirements
+- Code review and verification of implementations
+- Handling complex debugging and system-level issues
+- Multi-system reasoning and integration problems
+
+#### When to Use the Task Tool
+
+**Sonnet should delegate to Opus for:**
+- Initial codebase exploration and analysis
+- Complex architectural decisions
+- Multi-system debugging
+- Planning and requirement analysis
+- Tasks requiring deep reasoning about system interactions
+- Complex refactoring that affects multiple files/systems
+
+**Sonnet should handle directly:**
+- Making edits to existing files
+- Implementing features with clear requirements
+- Following established patterns (e.g., adding new API endpoints)
+- Routine code updates and maintenance tasks
+- Straightforward bug fixes and improvements
+
+#### Best Practices
+
+1. **Clear Task Definitions**: When using the Task tool, provide specific, actionable instructions
+2. **Context Preservation**: Include relevant file paths, function names, and implementation details
+3. **Pattern References**: Point Sonnet to existing examples in the codebase to follow
+4. **Success Criteria**: Define what "done" looks like for the delegated task
+
+### Debuggging:
+
+When you hand off to Opus 4.1 for troubleshooting, please remind them to:
+- Review the current conversation thus far
+- Review the project CLAUDE.md file
+- Tail `logs.gpr` to view the details of the most recent test
+- Search the web for any details needed about how SVGuitar works as of late 2025 (do not make assumptions, your training data set is outdated)
+This approach helps Steven stay within API rate limits while getting the best capabilities from both model types.
+
+Also, when handing off tasks to Opus, please speak to them like they're a person, the same way I speak to you (instead of barking orders at them as if they're just a dumb command line.)
+
+### Debugging Session Lessons (2025-08-31)
+
+During the chord chart copy overwrite confirmation implementation, we learned some valuable debugging patterns:
+
+**What Works Well:**
+- Delegating complex debugging to Opus 4.1 as planned
+- Using screenshots and specific error evidence when handing off issues  
+- Incremental testing after each phase of implementation
+- Steven catching when Sonnet tries to debug instead of delegating
+
 ## Application Overview
 
 This is a **Guitar Practice Assistant** - a web application that helps musicians manage practice routines, exercises, and guitar-specific content like chord charts. It combines practice session management with guitar-focused features like chord chart editing and tuning tracking.
@@ -174,6 +244,8 @@ IMPORTANT:
 - You often try `python` first, which doesn't work, so just start with `python3`
 
 - If we ask Opus 4 for debugging help, please remind them not to try to start the server because it's already running and watchers are taking care of updates.
+
+- NEVER delete spreadsheet items. If you think something needs to be deleted, check with me first. In actuality, you we probably just need to change an ID instead of deleting.
 
 - Contextual reminder: In guitar we count strings in order from high pitch to low, so the string on the right side of our charts is string one. Likewise with frets, so fret one is at the top, and when we go "up" a fret, that means the next fret downward on the chart
 
@@ -425,74 +497,5 @@ The autocreate chord charts feature now supports **guitar tablature** (tab files
 - **Reference Chord Charts**: Visual chord diagrams for alternate tunings
 - **Mixed Uploads**: Combination of tablature + reference charts for comprehensive analysis
 
-#### Current Status & Next Steps
-- ✅ **Section extraction** working (Intro, Verse, Solo, Outro from tabs)
-- ✅ **Chord name matching** working (Eadd9, E, E6sus from reference charts)
-- ✅ **System architecture** solid: reference-first logic, CommonChords bypassing, data flow
-- ✅ **String numbering** fixed for SVGuitar compatibility (`6 - i` mapping)
-- 🔧 **Visual pattern matching** CRITICAL ISSUE: Step 1 visual analysis returns standard tuning patterns instead of actual dots from DADFAD reference files
-- 🔧 **Root cause**: Claude Opus 4.1 gives `[0, 2, 2, 1, 0, 0]` (EADGBE E chord) instead of reading actual dot positions from alternate tuning references
-- 🔧 **Next steps**: Try different visual analysis approaches, verify reference file contents, or use alternate models
-
-## Claude Model Coordination for Token Efficiency
-
-### Using the Task Tool for Implementation Work
-
-For optimal token efficiency and rate limit management, **Opus 4 models should use the Task tool to delegate implementation work to Sonnet agents**. This pattern maximizes Steven's usage within rate limits while leveraging each model's strengths:
-
-#### Division of Responsibilities
-
-This is IMPORTANT for managing rate-limiting and billing efficiency. **Sonnet 4 should be the default model** since Task tool calls are billed under the calling model's usage:
-
-**Sonnet 4 Role** claude-sonnet-4-20250514 (Default & Implementation):
-- File editing and code changes
-- Direct implementation of planned features
-- Routine refactoring and code updates
-- Following established patterns and conventions
-- Executing well-defined tasks with clear requirements
-- Basic debugging and troubleshooting
-- Most day-to-day development work
-
-**Opus 4.1 Role** claude-opus-4-1-20250805 (Complex Analysis via Task Tool):
-- Complex analysis and architectural decisions
-- Multi-file code investigation and understanding
-- Task planning and breaking down requirements
-- Code review and verification of implementations
-- Handling complex debugging and system-level issues
-- Multi-system reasoning and integration problems
-
-#### When to Use the Task Tool
-
-**Sonnet should delegate to Opus for:**
-- Initial codebase exploration and analysis
-- Complex architectural decisions
-- Multi-system debugging
-- Planning and requirement analysis
-- Tasks requiring deep reasoning about system interactions
-- Complex refactoring that affects multiple files/systems
-
-**Sonnet should handle directly:**
-- Making edits to existing files
-- Implementing features with clear requirements
-- Following established patterns (e.g., adding new API endpoints)
-- Routine code updates and maintenance tasks
-- Straightforward bug fixes and improvements
-
-#### Best Practices
-
-1. **Clear Task Definitions**: When using the Task tool, provide specific, actionable instructions
-2. **Context Preservation**: Include relevant file paths, function names, and implementation details
-3. **Pattern References**: Point Sonnet to existing examples in the codebase to follow
-4. **Success Criteria**: Define what "done" looks like for the delegated task
-
-### Debuggging:
-
-When you hand off to Opus 4.1 for troubleshooting, please remind them to:
-- Review the current conversation thus far
-- Review the project CLAUDE.md file
-- Tail `logs.gpr` to view the details of the most recent test
-- Search the web for any details needed about how SVGuitar works as of late 2025 (do not make assumptions, your training data set is outdated)
-
-This approach helps Steven stay within API rate limits while getting the best capabilities from both model types.
 
 Anon, we rock n roll 🙌🤘🎸...

@@ -255,6 +255,55 @@ const MemoizedChordChart = memo(({ chart, onEdit, onDelete, onInsertAfter }) => 
   );
 });
 
+// Helper functions for copy modal fuzzy matching (outside component to avoid re-creation)
+// Text normalization function for consistent matching
+const normalizeText = (str) => {
+  return str
+    // Normalize apostrophes and quotes
+    .replace(/[''`"]/g, "'")
+    // Normalize dashes and hyphens
+    .replace(/[–—−]/g, "-")
+    // Remove extra whitespace
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+};
+
+const extractBaseSongName = (title) => {
+  // Remove all parentheses and their contents: (acoustic), (electric), (relearning), etc.
+  return title.replace(/\s*\([^)]*\)\s*/g, '').trim();
+};
+
+const findSimilarSongs = (sourceTitle, allItems, sourceItemId) => {
+  const baseName = extractBaseSongName(sourceTitle);
+  const normalizedBaseName = normalizeText(baseName);
+  console.log('DEBUG: findSimilarSongs - sourceTitle:', sourceTitle, '-> baseName:', baseName, '-> normalized:', normalizedBaseName);
+  
+  return allItems.filter(item => {
+    // Skip the source item itself
+    if (item['A'] === sourceItemId) return false;
+    
+    const itemTitle = item['C'] || '';
+    const itemBaseName = extractBaseSongName(itemTitle);
+    const normalizedItemBaseName = normalizeText(itemBaseName);
+    
+    // FIXED: More precise similarity matching - require significant overlap
+    // Only match if the normalized base names are identical OR one is a substantial subset of the other
+    const matches = normalizedBaseName === normalizedItemBaseName ||
+                   (normalizedBaseName.length > 3 && normalizedItemBaseName.includes(normalizedBaseName)) ||
+                   (normalizedItemBaseName.length > 3 && normalizedBaseName.includes(normalizedItemBaseName));
+    
+    // Debug logging for potential matches
+    if (itemTitle.toLowerCase().includes('feelin') || itemTitle.toLowerCase().includes('alright')) {
+      console.log('DEBUG: Checking item:', itemTitle, '-> itemBaseName:', itemBaseName, '-> normalized:', normalizedItemBaseName, '-> matches:', matches);
+      console.log('  normalizedBaseName:', normalizedBaseName);
+      console.log('  normalizedItemBaseName:', normalizedItemBaseName);
+    }
+    
+    return matches;
+  });
+};
+
 export const PracticePage = () => {
   const { routine } = useActiveRoutine();
   const { fetchItemDetails, getItemDetails, isLoadingItem } = useItemDetails();
@@ -282,6 +331,8 @@ export const PracticePage = () => {
   const [copySourceItemId, setCopySourceItemId] = useState(null);
   const [copySearchTerm, setCopySearchTerm] = useState('');
   const [selectedTargetItems, setSelectedTargetItems] = useState(new Set());
+  const [itemsWithExistingCharts, setItemsWithExistingCharts] = useState(new Set());
+  const [showOverwriteConfirmation, setShowOverwriteConfirmation] = useState(false);
   
   // Autocreate chord charts from files
   const [showDeleteChordsModal, setShowDeleteChordsModal] = useState(false);
@@ -291,6 +342,7 @@ export const PracticePage = () => {
   const [showAutocreateZone, setShowAutocreateZone] = useState({});
   const [autocreateAbortController, setAutocreateAbortController] = useState({});
   const [processingMessageIndex, setProcessingMessageIndex] = useState(0);
+// oxlint-disable-next-line no-unused-vars
   const [messageQueue, setMessageQueue] = useState([]);
   const [showCancelConfirmation, setShowCancelConfirmation] = useState(false);
   const [pendingCancelItemId, setPendingCancelItemId] = useState(null);
@@ -706,6 +758,22 @@ export const PracticePage = () => {
     }
   }, [routine, loadAllChordCharts]);
   
+  // Detect items with existing chord charts for overwrite warnings
+  useEffect(() => {
+    if (selectedTargetItems.size > 0) {
+      const itemsWithCharts = new Set();
+      selectedTargetItems.forEach(itemId => {
+        const existingCharts = chordCharts[itemId] || [];
+        if (existingCharts.length > 0) {
+          itemsWithCharts.add(itemId);
+        }
+      });
+      setItemsWithExistingCharts(itemsWithCharts);
+    } else {
+      setItemsWithExistingCharts(new Set());
+    }
+  }, [selectedTargetItems, chordCharts]);
+  
   // Rotate processing messages every 10 seconds
   useEffect(() => {
     const processingItems = Object.values(autocreateProgress).filter(progress => progress === 'processing');
@@ -919,6 +987,97 @@ export const PracticePage = () => {
       console.error('Error fetching notes:', error);
     }
   }, []);
+
+
+  // Memoized similar items calculation for copy modal
+  // FIXED: Remove getItemDetails dependency to prevent unnecessary recalculations during search
+  const similarItemIds = useMemo(() => {
+    if (!copySourceItemId || !allItems) return new Set();
+    
+    // Get source item directly from allItems instead of using getItemDetails
+    // This prevents recalculation when getItemDetails recreates due to cache changes
+    const sourceItem = allItems.find(item => item['A'] === copySourceItemId);
+    const sourceTitle = sourceItem?.['C'] || '';
+    const allFilteredItems = allItems.filter(item => item['A'] !== copySourceItemId);
+    
+    return new Set(
+      findSimilarSongs(sourceTitle, allFilteredItems, copySourceItemId).map(item => item['A'])
+    );
+  }, [copySourceItemId, allItems]);
+
+  // Memoized filtered and sorted items for copy modal
+  const sortedAndFilteredItems = useMemo(() => {
+    if (!allItems) return [];
+    
+    return allItems
+      .filter(item => {
+        // Filter out the source item
+        if (item['A'] === copySourceItemId) return false;
+        
+        // Filter by search term
+        if (copySearchTerm.trim()) {
+          const title = item['C'] || '';
+          
+          const normalizedTitle = normalizeText(title);
+          const normalizedSearch = normalizeText(copySearchTerm);
+          
+          // Handle empty search after normalization
+          if (!normalizedSearch) return true;
+          
+          console.log(`DEBUG SEARCH: "${copySearchTerm}" -> "${normalizedSearch}" searching in "${title}" -> "${normalizedTitle}" -> match: ${normalizedTitle.includes(normalizedSearch)}`);
+          
+          return normalizedTitle.includes(normalizedSearch);
+        }
+        
+        return true;
+      })
+      .sort((a, b) => {
+        // If there's an active search term, only sort alphabetically to respect search results
+        if (copySearchTerm.trim()) {
+          const aTitle = a['C'] || '';
+          const bTitle = b['C'] || '';
+          return aTitle.localeCompare(bTitle);
+        }
+        
+        // Check if items are similar to source using pre-calculated set
+        const aIsSimilar = similarItemIds.has(a['A']);
+        const bIsSimilar = similarItemIds.has(b['A']);
+        
+        // Sort similar songs to the top (only when no search term)
+        if (aIsSimilar && !bIsSimilar) return -1;
+        if (!aIsSimilar && bIsSimilar) return 1;
+        
+        // Within each group (similar/non-similar), sort alphabetically
+        const aTitle = a['C'] || '';
+        const bTitle = b['C'] || '';
+        return aTitle.localeCompare(bTitle);
+      });
+  }, [allItems, copySourceItemId, copySearchTerm, similarItemIds]);
+
+  // Esc key handler for closing modals
+  useEffect(() => {
+    const handleEscKey = (event) => {
+      if (event.key === 'Escape') {
+        if (showCopyModal) {
+          handleCloseCopyModal();
+        } else if (showDeleteChordsModal) {
+          setShowDeleteChordsModal(false);
+          setDeleteModalItemId(null);
+        } else if (showMixedContentModal) {
+          setShowMixedContentModal(false);
+        } else if (showUnsupportedFormatModal) {
+          setShowUnsupportedFormatModal(false);
+        } else if (showCancelConfirmation) {
+          setShowCancelConfirmation(false);
+        } else if (showApiErrorModal) {
+          setShowApiErrorModal(false);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleEscKey);
+    return () => document.removeEventListener('keydown', handleEscKey);
+  }, [showCopyModal, showDeleteChordsModal, showMixedContentModal, showUnsupportedFormatModal, showCancelConfirmation, showApiErrorModal]);
 
   // Initialize timer for an item
   const initTimer = useCallback((itemId, duration) => {
@@ -1589,9 +1748,38 @@ export const PracticePage = () => {
     }
   };
 
+
   // Chord chart copy functionality
-  const handleOpenCopyModal = (itemId) => {
+  const handleOpenCopyModal = async (itemId) => {
+    console.log('Opening copy modal for item:', itemId);
     setCopySourceItemId(itemId);
+    
+    // Get source item details for fuzzy matching
+    const sourceItem = getItemDetails(itemId);
+    const sourceTitle = sourceItem?.['C'] || '';
+    
+    // Find similar songs first
+    const similarSongs = findSimilarSongs(sourceTitle, allItems, itemId);
+    console.log('Source:', sourceTitle);
+    console.log('Found similar songs:', similarSongs.map(s => s['C']));
+    
+    // Load chord charts only for the source item and similar songs  
+    const itemsToLoad = [itemId, ...similarSongs.map(s => s['A'])];
+    console.log('Loading chord charts for items:', itemsToLoad);
+    
+    for (const id of itemsToLoad) {
+      try {
+        const response = await fetch(`/api/items/${id}/chord-charts`);
+        if (response.ok) {
+          const charts = await response.json();
+          setChordCharts(prev => ({ ...prev, [id]: charts }));
+          console.log(`Loaded ${charts.length} charts for item ${id}`);
+        }
+      } catch (error) {
+        console.error(`Error loading chord charts for item ${id}:`, error);
+      }
+    }
+    
     setShowCopyModal(true);
     setCopySearchTerm('');
     setSelectedTargetItems(new Set());
@@ -1602,6 +1790,7 @@ export const PracticePage = () => {
     setCopySourceItemId(null);
     setCopySearchTerm('');
     setSelectedTargetItems(new Set());
+    setShowOverwriteConfirmation(false);
   };
 
   const handleToggleTargetItem = (itemId) => {
@@ -1617,7 +1806,16 @@ export const PracticePage = () => {
   };
 
   const handleConfirmCopy = async () => {
+    console.log('handleConfirmCopy called', { copySourceItemId, selectedTargetItems: Array.from(selectedTargetItems) });
     if (!copySourceItemId || selectedTargetItems.size === 0) {
+      console.log('Early return: missing source or targets');
+      return;
+    }
+
+    // If there are overwrites and we haven't confirmed yet, show confirmation
+    if (itemsWithExistingCharts.size > 0 && !showOverwriteConfirmation) {
+      console.log('Showing overwrite confirmation, items with existing charts:', itemsWithExistingCharts.size);
+      setShowOverwriteConfirmation(true);
       return;
     }
 
@@ -1653,6 +1851,20 @@ export const PracticePage = () => {
       console.error('Error copying chord charts:', error);
       // TODO: Add user-visible error handling
     }
+  };
+
+  // Overwrite confirmation handlers
+  const handleOverwriteConfirmed = () => {
+    console.log('Overwrite confirmed, proceeding with copy');
+    setShowOverwriteConfirmation(false);
+    // Continue with the copy by calling handleConfirmCopy again
+    handleConfirmCopy();
+  };
+
+  const handleOverwriteCancelled = () => {
+    console.log('Overwrite cancelled, returning to item selection');
+    setShowOverwriteConfirmation(false);
+    // Stay in the modal, return to item selection
   };
 
   // Autocreate functions
@@ -2749,96 +2961,136 @@ export const PracticePage = () => {
       {showCopyModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div 
-            className="bg-gray-800 rounded-lg p-6 w-full max-w-md max-h-[80vh] flex flex-col"
+            className={`bg-gray-700 rounded-lg p-6 ${showOverwriteConfirmation ? 'max-w-xs' : 'w-full max-w-md'} max-h-[80vh] flex flex-col`}
             onWheel={(e) => e.stopPropagation()}
           >
-            <h2 className="text-xl font-bold text-white mb-4">
-              Copy Chord Charts
-            </h2>
-            
-            <p className="text-gray-300 mb-4">
-              Copy chord charts from "{getItemDetails(copySourceItemId)?.['C'] || 'Unknown Song'}" to:
-            </p>
+            {!showOverwriteConfirmation ? (
+              <>
+                <h2 className="text-xl font-bold text-white mb-4">
+                  Copy Chord Charts
+                </h2>
+                
+                <p className="text-gray-300 mb-2">
+                  Copy chord charts from "{getItemDetails(copySourceItemId)?.['C'] || 'Unknown Song'}" to:
+                </p>
+                
 
-            {/* Search field */}
-            <input
-              type="text"
-              placeholder="Search songs..."
-              value={copySearchTerm}
-              onChange={(e) => setCopySearchTerm(e.target.value)}
-              className="w-full p-2 mb-4 bg-gray-700 text-white rounded border border-gray-600 focus:border-purple-500"
-            />
+                {/* Search field */}
+                <input
+                  type="text"
+                  placeholder="Search songs..."
+                  value={copySearchTerm}
+                  onChange={(e) => setCopySearchTerm(e.target.value)}
+                  className="w-full p-2 mb-4 bg-gray-700 text-white rounded border border-gray-600 focus:border-purple-500"
+                />
 
-            {/* Scrollable song list */}
-            <div className="flex-1 overflow-y-auto mb-4 min-h-0 modal-scroll">
-              {allItems
-                .filter(item => {
-                  // Filter out the source item
-                  if (item['A'] === copySourceItemId) return false;
-                  
-                  // Filter out items that already share chord charts with source
-                  const itemHasSharedCharts = (chordCharts[copySourceItemId] || []).some(chart => {
-                    const itemIds = chart.itemId ? chart.itemId.toString().split(',').map(id => id.trim()) : [];
-                    return itemIds.includes(item['A'].toString());
-                  });
-                  if (itemHasSharedCharts) return false;
-                  
-                  // Filter by search term
-                  if (copySearchTerm) {
-                    const title = item['C'] || '';
-                    return title.toLowerCase().includes(copySearchTerm.toLowerCase());
-                  }
-                  
-                  return true;
-                })
-                .map(item => (
-                  <div key={item['A']} className="flex items-center mb-2">
-                    <input
-                      type="checkbox"
-                      id={`copy-item-${item['A']}`}
-                      checked={selectedTargetItems.has(item['A'])}
-                      onChange={() => handleToggleTargetItem(item['A'])}
-                      className="mr-3"
-                    />
-                    <label 
-                      htmlFor={`copy-item-${item['A']}`}
-                      className="text-white cursor-pointer flex-1"
-                    >
-                      {item['C'] || 'Untitled'}
-                    </label>
-                  </div>
-                ))}
-            </div>
+                {/* Scrollable song list */}
+                <div className="flex-1 overflow-y-auto mb-4 min-h-0 modal-scroll">
+                  {sortedAndFilteredItems.map(item => (
+                      <div key={item['A']} className="flex items-center mb-2">
+                        <input
+                          type="checkbox"
+                          id={`copy-item-${item['A']}`}
+                          checked={selectedTargetItems.has(item['A'])}
+                          onChange={() => handleToggleTargetItem(item['A'])}
+                          className="mr-3"
+                        />
+                        <label 
+                          htmlFor={`copy-item-${item['A']}`}
+                          className="text-white cursor-pointer flex-1 flex items-center"
+                        >
+                          <span>{item['C'] || 'Untitled'}</span>
+                          {itemsWithExistingCharts.has(item['A']) && (
+                            <span className="text-yellow-400 ml-2 text-sm"> ⚠️will overwrite</span>
+                          )}
+                        </label>
+                      </div>
+                    ))}
+                </div>
 
-            {/* Modal buttons */}
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handleCloseCopyModal}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleConfirmCopy}
-                disabled={selectedTargetItems.size === 0}
-                style={selectedTargetItems.size === 0 ? {
-                  backgroundColor: '#4b5563',
-                  color: '#d1d5db',
-                  opacity: '1'
-                } : {
-                  backgroundColor: '#5b1f1f',
-                  color: '#ffffff',
-                  opacity: '1'
-                }}
-                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:cursor-not-allowed"
-              >
-                Copy to {selectedTargetItems.size} song{selectedTargetItems.size !== 1 ? 's' : ''}
-              </Button>
-            </div>
+                {/* Modal buttons */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleCloseCopyModal}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleConfirmCopy}
+                    disabled={selectedTargetItems.size === 0}
+                    style={selectedTargetItems.size === 0 ? {
+                      backgroundColor: '#4b5563',
+                      color: '#d1d5db',
+                      opacity: '1'
+                    } : itemsWithExistingCharts.size > 0 ? {
+                      backgroundColor: '#dc2626',
+                      color: '#ffffff',
+                      opacity: '1'
+                    } : {
+                      backgroundColor: '#5b1f1f',
+                      color: '#ffffff',
+                      opacity: '1'
+                    }}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:cursor-not-allowed"
+                  >
+                    {itemsWithExistingCharts.size > 0 
+                      ? `Copy and Overwrite ${selectedTargetItems.size} song${selectedTargetItems.size !== 1 ? 's' : ''}`
+                      : `Copy to ${selectedTargetItems.size} song${selectedTargetItems.size !== 1 ? 's' : ''}`
+                    }
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-semibold text-white mb-4">
+                  Confirm Overwrite
+                </h3>
+                <p className="text-gray-300 mb-4">
+                  {itemsWithExistingCharts.size} of the selected songs already have chord charts. 
+                  Copying will replace all existing chord charts in those songs.
+                </p>
+                
+                {/* List of songs being overwritten */}
+                <div className="bg-gray-600 rounded p-3 mb-4">
+                  <p className="text-sm text-gray-200 mb-2 font-medium">Songs that will be overwritten:</p>
+                  <ul className="text-sm text-gray-300 space-y-1">
+                    {sortedAndFilteredItems
+                      .filter(item => selectedTargetItems.has(item['A']) && itemsWithExistingCharts.has(item['A']))
+                      .map(item => (
+                        <li key={item['A']} className="flex items-center">
+                          <span className="text-yellow-400 mr-2">•</span>
+                          {item['C'] || 'Unknown Song'}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+                
+                <p className="text-sm text-gray-400 mb-6">
+                  This action cannot be undone.
+                </p>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    onClick={handleOverwriteCancelled} 
+                    className="flex-1"
+                  >
+                    Go Back
+                  </Button>
+                  <Button 
+                    onClick={handleOverwriteConfirmed} 
+                    className="flex-1 bg-red-600 hover:bg-red-700"
+                  >
+                    Yes, Overwrite
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
+
 
       {/* Delete Existing Chord Charts Modal */}
       <AlertDialog open={showDeleteChordsModal} onOpenChange={setShowDeleteChordsModal}>

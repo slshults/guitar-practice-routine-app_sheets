@@ -186,9 +186,15 @@ export const PracticeItemsList = ({ items = [], onItemsChange }) => {
     })
   );
 
-  const filteredItems = items.filter((item) =>
-    item?.['C']?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredItems = items.filter((item) => {
+    if (!searchQuery) return true;
+    const title = item?.['C'] || '';
+    // Normalize apostrophes in both search term and title for consistent matching
+    const normalizeApostrophes = (str) => str.replace(/[''`]/g, "'");
+    const normalizedTitle = normalizeApostrophes(title.toLowerCase());
+    const normalizedSearch = normalizeApostrophes(searchQuery.toLowerCase());
+    return normalizedTitle.includes(normalizedSearch);
+  });
 
   return (
     <>

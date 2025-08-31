@@ -48,7 +48,12 @@ export const useRoutineEditor = (routineId = null, initialRoutineDetails = null,
     const selectedItemIds = new Set(selectedItems.map(item => item.itemDetails?.['B'] || item.routineEntry?.['B']));
     const filtered = availableItems.filter(item => {
       const isSelected = selectedItemIds.has(item['B']);  // Column B is Item ID
-      const matchesSearch = item['C']?.toLowerCase().includes(searchQuery.toLowerCase());  // Column C is Title
+      // Normalize apostrophes in both search term and title for consistent matching
+      const normalizeApostrophes = (str) => str.replace(/[''`]/g, "'");
+      const title = item['C'] || '';
+      const normalizedTitle = normalizeApostrophes(title.toLowerCase());
+      const normalizedSearch = normalizeApostrophes(searchQuery.toLowerCase());
+      const matchesSearch = normalizedTitle.includes(normalizedSearch);  // Column C is Title
       return !isSelected && matchesSearch;
     });
     return filtered;
