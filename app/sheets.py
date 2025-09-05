@@ -133,7 +133,9 @@ def get_credentials():
 def get_spread():
     """Get the Google Spreadsheet instance."""
     logging.debug("Entered get_spread")
-    spread_id = "***REDACTED_SPREADSHEET_ID***"
+    spread_id = os.getenv('GOOGLE_SPREADSHEET_ID')
+    if not spread_id:
+        raise ValueError("GOOGLE_SPREADSHEET_ID not set in environment variables")
     creds, _ = get_credentials()
     if not creds:
         logging.debug("No valid credentials found")
