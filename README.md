@@ -14,8 +14,8 @@ Includes a chord chart generator with thousands of chords, and an import/autocre
 - **Guitar-Specific**: I mean, you can use it for other instruments, but I'm just a guitar hobbyist, so don't expect future features for other instruments.
 
 ## Screenshots
-
-### Main Interface
+*Click to enbiggen*
+#### Main Interface
 
 <table>
 <tr>
@@ -35,31 +35,43 @@ Includes a chord chart generator with thousands of chords, and an import/autocre
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Items.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Items-200.png" alt="Items Library" width="200">
 </a>
-<br><em>Items Library</em>
+<br><em>Items Library/Songbook</em>
 </td>
 </tr>
 </table>
 
-### Chord Chart Features
+#### Chord Chart Features
 
 <table>
 <tr>
-<td width="50%">
+<td width="25%">
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts1.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts1-200.png" alt="Chord Chart Display" width="200">
 </a>
-<br><em>Chord Chart Display</em>
+<br><em>Chord Chart editor</em>
 </td>
-<td width="50%">
+<td width="25%">
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts2.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts2-200.png" alt="Chord Chart Editor" width="200">
 </a>
-<br><em>Interactive Chord Editor</em>
+<br><em>Type `C`, get a cowboy C</em>
+</td>
+<td width="25%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts3.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts3-200.png" alt="Chord Chart Sections" width="200">
+</a>
+<br><em>Section organization</em>
+</td>
+<td width="25%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts4.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts4-200.png" alt="Advanced Chord Features" width="200">
+</a>
+<br><em>Advanced features</em>
 </td>
 </tr>
 </table>
 
-### Import & Search Features
+#### Import & Search Features
 
 <table>
 <tr>
@@ -67,24 +79,47 @@ Includes a chord chart generator with thousands of chords, and an import/autocre
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Import.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Import-200.png" alt="Import Files" width="200">
 </a>
-<br><em>Autocreate from Files</em>
+<br><em>Import items and routines</em>
 </td>
 <td width="33%">
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/search.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/search-200.png" alt="Chord Search" width="200">
 </a>
-<br><em>Chord Search</em>
+<br><em>Search, drag n drop</em>
 </td>
 <td width="33%">
 <a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Timer.png">
 <img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Timer-200.png" alt="Practice Timer" width="200">
 </a>
-<br><em>Practice Timer</em>
+<br><em>Timer</em>
 </td>
 </tr>
 </table>
 
-*Click any image to view full size*
+#### Editing & Management
+
+<table>
+<tr>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/createNewItem.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/createNewItem-200.png" alt="Create New Item" width="200">
+</a>
+<br><em>Create new items</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/editRoutine.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/editRoutine-200.png" alt="Edit Routine" width="200">
+</a>
+<br><em>Edit routines</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/terminal.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/terminal-200.png" alt="Development Terminal" width="200">
+</a>
+<br><em>Development setup</em>
+</td>
+</tr>
+</table>
 
 ## Setup
 
