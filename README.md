@@ -239,4 +239,4 @@ This project builds upon the excellent work of many open source projects and ser
 - **[Node.js](https://nodejs.org/)** - JavaScript runtime for build tools
 - **[npm](https://www.npmjs.com/)** - Package manager
 
-Thank you to all the maintainers and contributors of these projects! 🎸
+Thank you to all the maintainers and contributors of these projects! 🤘
