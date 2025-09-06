@@ -33,7 +33,8 @@ logging.basicConfig(level=logging.DEBUG)
 # Main route
 @app.route('/')
 def index():
-    return render_template('index.html.jinja')
+    posthog_key = os.getenv('POSTHOG_API_KEY', '')
+    return render_template('index.html.jinja', posthog_key=posthog_key)
 
 # Item routes
 @app.route('/api/items', methods=['GET', 'POST'])
