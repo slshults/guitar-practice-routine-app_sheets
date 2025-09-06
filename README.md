@@ -6,6 +6,7 @@ Includes a chord chart generator with thousands of chords, and an import/autocre
 ## Features
 
 - **Practice Session Management**: Create and manage practice routines
+- Drag and drop reording of items, routines, and items within routines
 - **Chord Charts**: Visual chord charts (courtesy [SVGuitar](https://github.com/omnibrain/svguitar))
 - **Huge List of Chords**: Type a chord name to have the chart created for you (thanks to [David Rupert](https://github.com/tombatossals/chords-db) via [Zoltán Szabó](https://github.com/szaza/guitar-chords-db-json))
 - **Autocreate from Files**: Upload PDFs/images to get automatically generate chord charts
