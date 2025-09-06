@@ -62,7 +62,7 @@ This approach helps us stay within API rate limits while getting the best capabi
 
 ## Application Overview
 
-This is a **Guitar Practice Routine Assistant** - a web application that helps guitarists manage practice routines, exercises, and guitar-specific content like chord charts. 
+This is a **Guitar Practice Routine App** - a web application that helps guitarists manage practice routines, exercises, and guitar-specific content like chord charts. 
 
 ## Tech Stack
 
@@ -450,30 +450,5 @@ setChordSections(prev => ({
 2. Verify chord name matching logic is working
 3. Ensure song structure is preserved from tablature
 4. Validate visual analysis descriptions make sense
-
-### Tablature Support System (NEW)
-
-#### Overview
-The autocreate chord charts feature now supports **guitar tablature** (tab files) in addition to traditional chord sheets. Users can upload tablature notation with alternate tunings (DADFAD, etc.) along with reference chord diagrams for accurate chord extraction.
-
-#### Technical Implementation
-**API Model**: Uses **Claude Sonnet 4** (`claude-sonnet-4-20250514`) for superior visual analysis and pattern matching
-
-**Backend Logic** (`app/routes.py:1897-1956`):
-- **Priority Path**: For alternate tunings + tablature, uses extracted fret patterns directly
-- **Pattern Matching**: Compares tablature patterns to reference chord diagrams
-- **Fallback**: Uses CommonChords database for standard tuning or when no fret data available
-
-**Data Flow**:
-1. **Two-Step Visual Analysis**: Step 1 uses Claude Opus 4.1 for focused visual analysis of reference chord diagrams, Step 2 uses Claude Sonnet 4 to combine with tablature structure
-2. **Direct pattern usage**: When reference files are present, uses extracted patterns directly (NO CommonChords lookup - reference indicates alternate tuning)
-3. **Exact recreation**: Creates chord charts with identical finger positions from reference diagrams, ignoring all position markers
-4. Preserves alternate tuning information (DADFAD, capo position, etc.)
-
-#### Supported Formats
-- **Tablature**: Guitar tab notation with fret numbers on string lines
-- **Reference Chord Charts**: Visual chord diagrams for alternate tunings
-- **Mixed Uploads**: Combination of tablature + reference charts for comprehensive analysis
-
 
 Anon, we rock n roll 🙌🤘🎸...
