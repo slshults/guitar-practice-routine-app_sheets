@@ -13,6 +13,79 @@ Includes a chord chart generator with thousands of chords, and an import/autocre
 - **Google Sheets Integration**: Data stored in Google Sheets for easy access, revision history (PostgreSQL version on the way)
 - **Guitar-Specific**: I mean, you can use it for other instruments, but I'm just a guitar hobbyist, so don't expect future features for other instruments.
 
+## Screenshots
+
+### Main Interface
+
+<table>
+<tr>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Practice.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Practice-200.png" alt="Practice Page" width="200">
+</a>
+<br><em>Practice Page</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Routines.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Routines-200.png" alt="Routines Management" width="200">
+</a>
+<br><em>Routines Management</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Items.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Items-200.png" alt="Items Library" width="200">
+</a>
+<br><em>Items Library</em>
+</td>
+</tr>
+</table>
+
+### Chord Chart Features
+
+<table>
+<tr>
+<td width="50%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts1.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts1-200.png" alt="Chord Chart Display" width="200">
+</a>
+<br><em>Chord Chart Display</em>
+</td>
+<td width="50%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts2.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/ChordCharts2-200.png" alt="Chord Chart Editor" width="200">
+</a>
+<br><em>Interactive Chord Editor</em>
+</td>
+</tr>
+</table>
+
+### Import & Search Features
+
+<table>
+<tr>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Import.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Import-200.png" alt="Import Files" width="200">
+</a>
+<br><em>Autocreate from Files</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/search.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/search-200.png" alt="Chord Search" width="200">
+</a>
+<br><em>Chord Search</em>
+</td>
+<td width="33%">
+<a href="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Timer.png">
+<img src="https://raw.githubusercontent.com/slshults/guitar-practice-routine-app_sheets/main/screenshots/Timer-200.png" alt="Practice Timer" width="200">
+</a>
+<br><em>Practice Timer</em>
+</td>
+</tr>
+</table>
+
+*Click any image to view full size*
+
 ## Setup
 
 ### Prerequisites
