@@ -141,7 +141,7 @@ echo -e "${GREEN}Starting Python file watcher...${NC}"
 WATCHER_PID=$!
 PIDS+=($WATCHER_PID)
 
-echo -e "${GREEN}Guitar Practice Assistant is ready!${NC}"
+echo -e "${GREEN}Guitar Practice Routine App is ready!${NC}"
 echo -e "${BLUE}Press Ctrl+C to stop all processes${NC}"
 
 # Wait for all background processes

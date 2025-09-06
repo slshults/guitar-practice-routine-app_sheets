@@ -218,6 +218,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This project builds upon the excellent work of many open source projects and services:
 
+Inspired by [My Practice Assistant on JustinGuitar.com](https://www.justinguitar.com/guitar-lessons/using-my-practice-assistant-b1-117) 
+
 ### Core Technologies
 - **[Flask](https://flask.palletsprojects.com/)** - Python web framework
 - **[React](https://reactjs.org/)** - Frontend JavaScript library

@@ -35,7 +35,7 @@ const PageContent = () => {
 const App = () => {
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-4xl font-bold text-orange-500 mb-8">Guitar Practice Assistant</h1>
+      <h1 className="text-4xl font-bold text-orange-500 mb-8">Guitar Practice Routine App</h1>
       <NavMenu />
       <PageContent />
     </div>

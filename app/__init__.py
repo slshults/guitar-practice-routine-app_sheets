@@ -22,6 +22,6 @@ file_handler.setLevel(logging.INFO)
 app.logger.addHandler(file_handler)
 
 app.logger.setLevel(logging.INFO)
-app.logger.info('Guitar Practice Assistant startup')
+app.logger.info('Guitar Practice Routine App startup')
 
 from app import routes
