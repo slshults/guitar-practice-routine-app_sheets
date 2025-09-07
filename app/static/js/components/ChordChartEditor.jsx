@@ -303,7 +303,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Cleanup on unmount
     return () => {
       if (currentHandlerRef.current && currentHandlerRef.current.svg) {
-        currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
+        currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.clickHandler);
+        currentHandlerRef.current.svg.removeEventListener('mousedown', currentHandlerRef.current.mousedownHandler);
       }
     };
   }, []);
@@ -332,27 +333,49 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
       return;
     }
 
-    // Remove the old handler if it exists
+    // Remove the old handlers if they exist
     if (currentHandlerRef.current && currentHandlerRef.current.svg) {
-      currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.handler);
+      currentHandlerRef.current.svg.removeEventListener('click', currentHandlerRef.current.clickHandler);
+      currentHandlerRef.current.svg.removeEventListener('mousedown', currentHandlerRef.current.mousedownHandler);
     }
     
-    // Create a new handler that captures the current context
-    const newHandler = (event) => {
-      if (event && event.stopPropagation) {
-        event.stopPropagation(); // Prevent event bubbling
+    // Prevent text selection on rapid clicks/double-clicks
+    const mousedownHandler = (event) => {
+      // Prevent text selection on multiple rapid clicks (double-click, etc.)
+      if (event.detail > 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
       }
-      if (event && event.preventDefault) {
-        event.preventDefault();  // Prevent default behavior
-      }
+      
+      // Always prevent default mousedown behavior on SVG to avoid text selection
+      event.preventDefault();
+    };
+    
+    // Handle the actual click interaction
+    const clickHandler = (event) => {
+      event.stopPropagation(); // Prevent event bubbling
+      event.preventDefault();  // Prevent any remaining default behavior
+      
       handleEditorClick(event);
     };
     
-    // Add the new handler
-    svg.addEventListener('click', newHandler);
+    // Apply CSS user-select none to SVG for comprehensive text selection prevention
+    svg.style.userSelect = 'none';
+    svg.style.webkitUserSelect = 'none';
+    svg.style.mozUserSelect = 'none';
+    svg.style.msUserSelect = 'none';
     
-    // Store reference for cleanup
-    currentHandlerRef.current = { svg, handler: newHandler };
+    // Add both handlers
+    svg.addEventListener('mousedown', mousedownHandler);
+    svg.addEventListener('click', clickHandler);
+    
+    // Store references for cleanup
+    currentHandlerRef.current = { 
+      svg, 
+      clickHandler,
+      mousedownHandler
+    };
   };
 
   const handleEditorClick = (event) => {
@@ -406,10 +429,9 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     // Adjusted margins based on SVGuitar's actual layout
     const marginX = chartWidth * 0.15;
     
-    // The key fix: Adjust nut area detection based on starting fret
-    // When startingFret > 1, SVGuitar renders with much smaller nut area
-    // because it shows the fret number (e.g., "5fr") instead of full nut
-    const marginY = startingFret > 1 ? chartHeight * 0.05 : chartHeight * 0.12;
+    // Consistent margin calculation - SVGuitar uses relatively consistent top/bottom margins
+    // The position indicator doesn't significantly change the chord chart area
+    const marginY = chartHeight * 0.08;
     
     const fretboardWidth = chartWidth - (marginX * 2);
     const fretboardHeight = chartHeight - (marginY * 2);
@@ -432,7 +454,7 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     const svguitarString = numStrings - stringIndex; // Flip the order
     
     // Check if click is in the nut area (above the fretboard)
-    // For higher position chords, this area is much smaller
+    // Nut area is above the fretboard proper 
     if (y < marginY) {
       toggleNutMarker(svguitarString);
       return;
@@ -445,25 +467,32 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
     }
     
     // Calculate fret (horizontal position down height)
-    // The key fix: SVGuitar frets are 1-based, but we need to map clicks to fret spaces
-    // Each fret occupies 1/numFrets of the fretboard height
+    // SVGuitar uses 1-based fret numbering relative to the chart position
+    // Map click position to the correct fret number within the visible fret range
     const relativeY = y - marginY;
     const fretRatio = relativeY / fretboardHeight;
-    const fretIndex = Math.floor(fretRatio * numFrets) + 1;
+    // Remove the +1 that was causing offset issues - frets should be 1-indexed naturally
+    const fretIndex = Math.ceil(fretRatio * numFrets);
     
-    // SVGuitar expects fret numbers relative to the startingFret position
-    // So fretIndex is already correct as the relative position
-
-    if (fretIndex >= 1 && fretIndex <= numFrets) {
-      
-      
-      if (currentEditMode === 'dots') {
-        toggleFinger(svguitarString, fretIndex);
-      } else if (currentEditMode === 'fingers') {
-        selectFingerForNumbering(svguitarString, fretIndex);
-      } else if (currentEditMode === 'barres') {
-        toggleBarre(svguitarString, fretIndex);
-      }
+    // Debug logging to verify click positioning
+    console.log('Click debug:', { 
+      rawX, rawY, x, y, svguitarString, fretIndex, 
+      marginX, marginY, fretRatio, relativeY, fretboardHeight 
+    });
+    
+    // SVGuitar expects fret numbers relative to the startingFret position  
+    // Ensure fretIndex is within valid bounds
+    if (fretIndex < 1 || fretIndex > numFrets) {
+      return; // Click outside valid fret range
+    }
+    
+    // Handle the click based on current edit mode
+    if (currentEditMode === 'dots') {
+      toggleFinger(svguitarString, fretIndex);
+    } else if (currentEditMode === 'fingers') {
+      selectFingerForNumbering(svguitarString, fretIndex);
+    } else if (currentEditMode === 'barres') {
+      toggleBarre(svguitarString, fretIndex);
     }
   };
 
@@ -846,8 +875,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           <div>
             <div className="text-lg font-serif mb-4">Editor</div>
             <div className="border border-gray-700 rounded-lg p-4">
-              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden">
-                <div id="editor-chart" ref={editorContainerRef} className="cursor-pointer" />
+              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden select-none">
+                <div id="editor-chart" ref={editorContainerRef} className="cursor-pointer select-none" />
               </div>
             </div>
           </div>
@@ -855,8 +884,8 @@ export const ChordChartEditor = ({ itemId, onSave, onCancel, editingChordId = nu
           <div>
             <div className="text-lg font-serif mb-4">Result</div>
             <div className="border border-gray-700 rounded-lg p-4">
-              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden">
-                <div id="result-chart" />
+              <div className="relative w-52 h-80 mx-auto flex items-center justify-center overflow-hidden select-none">
+                <div id="result-chart" className="select-none" />
               </div>
             </div>
           </div>
