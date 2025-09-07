@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@hooks/useAuth';
+import { trackItemOperation, trackRoutineOperation } from '../utils/analytics';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
@@ -246,6 +247,10 @@ const RoutinesPage = () => {
       });
       
       if (!response.ok) throw new Error('Failed to delete routine');
+      
+      // Track routine deletion
+      trackItemOperation('deleted', 'routine', routineToDelete.Name);
+      
       await fetchRoutines();
     } catch (error) {
       console.error('Failed to delete routine:', error);
@@ -268,6 +273,10 @@ const RoutinesPage = () => {
       });
       
       if (!response.ok) throw new Error('Failed to create routine');
+      
+      // Track routine creation
+      trackItemOperation('created', 'routine', newRoutineName.trim());
+      
       await fetchRoutines();
       setNewRoutineName('');
     } catch (error) {

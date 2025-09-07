@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { trackItemOperation, trackContentUpdate } from '../utils/analytics';
 import {
   Dialog,
   DialogContent,
@@ -104,6 +105,33 @@ export const ItemEditor = ({ open, onOpenChange, item = null, onItemChange }) =>
       }
 
       const savedItem = await response.json();
+      
+      // Track item creation or update
+      const isCreating = !item?.['A'];
+      const itemName = formData['C'] || 'Unnamed Item';
+      
+      if (isCreating) {
+        trackItemOperation('created', 'item', itemName);
+      } else {
+        trackItemOperation('updated', 'item', itemName);
+        
+        // Track specific content updates if this is an edit
+        const originalTitle = item?.['C'] || '';
+        const originalNotes = item?.['D'] || '';
+        const originalTuning = item?.['H'] || '';
+        const originalSongbook = item?.['I'] || '';
+        
+        if (formData['D'] && formData['D'] !== originalNotes) {
+          trackContentUpdate('notes', itemName);
+        }
+        if (formData['H'] && formData['H'] !== originalTuning) {
+          trackContentUpdate('tuning', itemName);
+        }
+        if (formData['I'] && formData['I'] !== originalSongbook) {
+          trackContentUpdate('folder_path', itemName);
+        }
+      }
+      
       onItemChange?.(savedItem);
       onOpenChange(false);
     } catch (err) {

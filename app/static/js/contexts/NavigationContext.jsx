@@ -1,13 +1,28 @@
 // app/static/js/contexts/NavigationContext.jsx
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { trackPageVisit } from '../utils/analytics';
 
 const NavigationContext = createContext(undefined);
 
 export const NavigationProvider = ({ children }) => {
   const [activePage, setActivePage] = useState('Practice');
 
+  // Track initial page load
+  useEffect(() => {
+    trackPageVisit(activePage);
+  }, []);
+
+  // Enhanced setActivePage that includes analytics tracking
+  const setActivePageWithTracking = (pageName) => {
+    setActivePage(pageName);
+    trackPageVisit(pageName);
+  };
+
   return (
-    <NavigationContext.Provider value={{ activePage, setActivePage }}>
+    <NavigationContext.Provider value={{ 
+      activePage, 
+      setActivePage: setActivePageWithTracking 
+    }}>
       {children}
     </NavigationContext.Provider>
   );

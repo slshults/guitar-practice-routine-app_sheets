@@ -214,6 +214,40 @@ Supported file types: PDF, PNG, JPG (max 10MB)
 - Section organization with repeat counts
 - Copy chord charts between songs (for when you have multiple practice items for the same song)
 
+### Practice Analytics with PostHog (Optional)
+
+Track your practice habits and progress using [PostHog's free tier](https://posthog.com/pricing?plan=free):
+
+**What's Tracked:**
+- Actual practice time per exercise/song
+- Timer usage patterns (started, stopped, reset)
+- Practice session completion rates
+- Chord chart interactions and autocreate usage
+
+**Setup:**
+1. Create a free [PostHog account](https://app.posthog.com/signup)
+2. Add your PostHog project key to `.env` as `POSTHOG_API_KEY`
+3. Use PostHog's [SQL editor](https://app.posthog.com/sql) to create custom insights
+
+**Example Practice Time Analysis:**
+```sql
+SELECT 
+  properties['item_name'] as item_name,
+  sum(properties['time_elapsed_seconds']) as total_seconds,
+  round(sum(properties['time_elapsed_seconds']) / 60.0, 2) as total_minutes,
+  count() as sessions
+FROM events 
+WHERE {filters}
+  AND event IN ('Item Marked Done', 'Timer Stopped')
+  AND properties['time_elapsed_seconds'] IS NOT NULL
+GROUP BY properties['item_name']
+ORDER BY total_seconds DESC
+```
+
+This query shows total practice time per item with the `{filters}` placeholder allowing you to use PostHog's date range picker in the GUI.
+
+More: [PostHog docs for SQL insights](https://posthog.com/docs/data-warehouse/sql)
+
 ## Architecture
 
 - **Backend**: Flask with Google Sheets as database

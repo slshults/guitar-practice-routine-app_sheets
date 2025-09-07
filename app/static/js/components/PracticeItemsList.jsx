@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
+import { trackItemOperation } from '../utils/analytics';
 import { Card, CardHeader, CardTitle, CardContent } from '@ui/card';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
@@ -113,6 +114,14 @@ export const PracticeItemsList = ({ items = [], onItemsChange }) => {
       if (!response.ok) {
         throw new Error('Failed to delete item');
       }
+      
+      // Track item deletion
+      const itemToDeleteData = items.find(item => item['A'] === itemToDelete);
+      if (itemToDeleteData) {
+        const itemName = itemToDeleteData['C'] || `Item ${itemToDelete}`; // Column C is Title
+        trackItemOperation('deleted', 'item', itemName);
+      }
+      
       onItemsChange();
     } catch (err) {
       console.error('Delete failed:', err);

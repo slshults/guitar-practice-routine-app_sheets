@@ -71,6 +71,7 @@ This is a **Guitar Practice Routine App** - a web application that helps guitari
 - **Authentication**: Google OAuth2 for Sheets access
 - **Guitar Features**: SVGuitar library for chord chart rendering
 - **UI Components**: Custom component library with Radix UI primitives
+- **Analytics**: PostHog for event tracking and user behavior analysis (MCP integration enabled for direct API access)
 
 ## Development Commands
 

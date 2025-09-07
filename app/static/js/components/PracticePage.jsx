@@ -1,4 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef, useMemo, memo } from 'react';
+import { trackPracticeEvent, trackActiveRoutine, trackChordChartEvent, trackSongbookLinkClick } from '../utils/analytics';
 
 // Simple debounce function
 const debounce = (func, wait) => {
@@ -755,6 +756,8 @@ export const PracticePage = () => {
   useEffect(() => {
     if (routine && routine.items) {
       loadAllChordCharts();
+      // Track active routine when practice page is visited
+      trackActiveRoutine(routine.name);
     }
   }, [routine, loadAllChordCharts]);
   
@@ -932,7 +935,6 @@ export const PracticePage = () => {
           if (next[itemId] > 0) {
             next[itemId] = next[itemId] - 1;
             changed = true;
-            console.log(`Timer ${itemId} ticked down to ${next[itemId]}`);
             
             // Play sound when timer hits zero
             if (next[itemId] === 0) {
@@ -1143,12 +1145,26 @@ export const PracticePage = () => {
       
       setActiveTimers(prev => {
         const next = new Set(prev);
+        const itemDetails = getItemDetails(routineItem['B']);
+        const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+        
         if (next.has(itemId)) {
           console.log(`Deactivating timer ${itemId}`);
           next.delete(itemId);
+          
+          // Calculate elapsed time for timer stopped event
+          const initialDuration = (itemDetails?.['E'] || 5) * 60; // Column E is Duration in minutes, convert to seconds
+          const currentTimer = timers[itemId] || initialDuration;
+          const elapsedSeconds = initialDuration - currentTimer;
+          
+          trackPracticeEvent('timer_stopped', itemName, {
+            time_elapsed_seconds: Math.max(0, elapsedSeconds),
+            initial_duration_minutes: itemDetails?.['E'] || 5
+          });
         } else {
           console.log(`Activating timer ${itemId}`);
           next.add(itemId);
+          trackPracticeEvent('started_timer', itemName);
         }
         return next;
       });
@@ -1176,6 +1192,23 @@ export const PracticePage = () => {
           const next = new Set(prev);
           if (newState) {
             next.add(routineEntryId);
+            
+            // Track completion with timer data
+            const routineItem = routine.items.find(item => item['A'] === routineEntryId);
+            if (routineItem) {
+              const itemDetails = getItemDetails(routineItem['B']);
+              const itemName = itemDetails?.['C'] || `Item ${routineEntryId}`; // Column C is Title
+              const initialDuration = (itemDetails?.['E'] || 5) * 60; // Column E is Duration in minutes, convert to seconds
+              const currentTimer = timers[routineEntryId] || initialDuration;
+              const elapsedSeconds = initialDuration - currentTimer;
+              
+              trackPracticeEvent('marked_done', itemName, {
+                time_elapsed_seconds: Math.max(0, elapsedSeconds),
+                was_timer_active: activeTimers.has(routineEntryId),
+                initial_duration_minutes: itemDetails?.['E'] || 5
+              });
+            }
+            
             // Stop timer when marking complete
             setActiveTimers(prev => {
               const next = new Set(prev);
@@ -1229,10 +1262,14 @@ export const PracticePage = () => {
       // Try to get cached item details, fallback to default
       const itemDetails = getItemDetails(routineItem['B']);
       const duration = itemDetails?.['E'] || 5;  // Column E is Duration
+      const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+      
       setTimers(prev => ({
         ...prev,
         [itemId]: duration * 60
       }));
+      
+      trackPracticeEvent('timer_reset', itemName);
     }
   };
 
@@ -1630,6 +1667,27 @@ export const PracticePage = () => {
 
       // With memoized components, updates will automatically trigger re-renders
 
+      // Track chord chart action
+      const routineItem = routine.items.find(item => item['B'] === itemId);
+      if (routineItem) {
+        const itemDetails = getItemDetails(itemId);
+        const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+        
+        if (isUpdate) {
+          trackChordChartEvent('edited', itemName, {
+            chord_name: chartData.title || 'Unknown Chord',
+            section_id: chartDataWithSection.sectionId,
+            section_label: chartDataWithSection.sectionLabel
+          });
+        } else {
+          trackChordChartEvent('added', itemName, {
+            chord_name: chartData.title || 'Unknown Chord',
+            section_id: chartDataWithSection.sectionId,
+            section_label: chartDataWithSection.sectionLabel
+          });
+        }
+      }
+
       // Hide the editor after saving and clear editing state
       setShowChordEditor(prev => ({
         ...prev,
@@ -1663,6 +1721,21 @@ export const PracticePage = () => {
       }
 
       console.log('Chord chart deleted successfully');
+
+      // Track chord chart deletion
+      const routineItem = routine.items.find(item => item['B'] === itemId);
+      if (routineItem) {
+        const itemDetails = getItemDetails(itemId);
+        const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+        
+        // Get chord info before deleting for tracking
+        const chordToDelete = (chordCharts[itemId] || []).find(chart => chart.id === chordId);
+        
+        trackChordChartEvent('deleted', itemName, {
+          chord_name: chordToDelete?.title || 'Unknown Chord',
+          chord_id: chordId
+        });
+      }
 
       // Update local state by removing the chart
       setChordCharts(prev => {
@@ -2031,6 +2104,19 @@ export const PracticePage = () => {
         console.log(`[AUTOCREATE] Processing successful, setting state to complete`);
         setAutocreateProgress({ [itemId]: 'complete' });
         
+        // Track autocreate chord charts success
+        const routineItem = routine.items.find(item => item['B'] === itemId);
+        if (routineItem) {
+          const itemDetails = getItemDetails(itemId);
+          const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+          
+          trackChordChartEvent('autocreated', itemName, {
+            file_count: files?.length || 0,
+            content_type: contentType || 'mixed',
+            uploaded_file_names: files?.map(f => f.name).join(', ') || ''
+          });
+        }
+        
         // Force refresh chord charts
         try {
           const chartsResponse = await fetch(`/api/items/${itemId}/chord-charts`);
@@ -2148,6 +2234,19 @@ export const PracticePage = () => {
       }
       
       setAutocreateProgress({ [itemId]: 'complete' });
+      
+      // Track autocreate chord charts success (direct upload flow)
+      const routineItem = routine.items.find(item => item['B'] === itemId);
+      if (routineItem) {
+        const itemDetails = getItemDetails(itemId);
+        const itemName = itemDetails?.['C'] || `Item ${itemId}`; // Column C is Title
+        
+        trackChordChartEvent('autocreated', itemName, {
+          file_count: result.file_count || 0,
+          content_type: result.content_type || 'auto-detected',
+          uploaded_file_names: result.uploaded_file_names || ''
+        });
+      }
       
       // Force refresh chord charts for this item (don't use loadChordChartsForItem as it skips if already loaded)
       try {
@@ -2901,6 +3000,11 @@ export const PracticePage = () => {
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
+                              
+                              // Track songbook link click
+                              const itemName = itemDetails?.['C'] || `Item ${routineItem['A']}`;
+                              trackSongbookLinkClick(itemName, itemDetails['F']);
+                              
                               fetch('/api/open-folder', {
                                 method: 'POST',
                                 headers: {
