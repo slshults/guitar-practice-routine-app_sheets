@@ -1,6 +1,6 @@
 # Guitar Practice Routine Assistant
 
-An web app to manage practice routines, for beginner and intermidiate guitar players. 
+A web app to manage practice routines, for beginner and intermidiate guitar players. 
 Includes a chord chart generator with thousands of chords, and an import/autocreate feature for alternate tunings and voicings. You can edit the chord charts and/or create your own from scratch
 
 ## Features
