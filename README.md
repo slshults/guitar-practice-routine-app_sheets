@@ -1,3 +1,10 @@
+## NOTE: This was a PoC I built on Google Sheets. 
+I'm not working on this version any more, but you're welcome to use it and/or submit PRs for betterizing it.
+There's a faster version, with a real DB and more features, here: https://github.com/slshults/guitar-practice-routine-app_postgresql
+
+Or, you can wait for the hosted web version I'm working on (freeium version with ads, paid tiers, yada yada yada, blah blah blah.)
+
+
 # Guitar Practice Routine Assistant
 
 A web app to manage practice routines, for beginner and intermidiate guitar players. 
